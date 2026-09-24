@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Admins fijos (debe coincidir con src/lib/admins.ts) + cuentas con role 'admin' que nombre un admin.
+    function isFixedAdmin() {
+      return request.auth != null
+        && request.auth.token.email in ['admin@admin.com'];
+    }
+    function signedIn() {
+      return request.auth != null;
+    }
+    function me() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+    function isAdmin() {
+      return isFixedAdmin() || (signedIn() && exists(me()) && get(me()).data.role == 'admin');
+    }
+    // Jugador vinculado a la cuenta que hace la petición (null si no tiene).
+    function myPlayerId() {
+      return signedIn() && exists(me()) ? get(me()).data.playerId : null;
+    }
+    function docExists(col, id) {
+      return exists(/databases/$(database)/documents/$(col)/$(id));
+    }
+    function onlyChanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+    function validName(n) {
+      return n is string && n.size() > 0 && n.size() <= 60;
+    }
+
+    // Cuentas: cada quien lee la suya; el admin, todas.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      // Registro: su propia cuenta, como jugador y sin vincular todavía.
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['email', 'name', 'playerId', 'role', 'createdAt'])
+        && request.resource.data.email == request.auth.token.email
+        && validName(request.resource.data.name)
+        && request.resource.data.playerId == null
+        && request.resource.data.role == 'jugador'
+        && request.resource.data.createdAt == request.time;
+      // Vincularse a un jugador, una sola vez y junto con marcar el jugador con su uid.
+      allow update: if isAdmin() || (
+        signedIn() && request.auth.uid == uid
+        && resource.data.playerId == null
+        && onlyChanged(['playerId'])
+        && request.resource.data.playerId is string
+        && getAfter(/databases/$(database)/documents/players/$(request.resource.data.playerId)).data.uid == uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Todo lo del boliche se lee sin login: la página de cada jugador se comparte por link.
+    match /players/{id} {
+      allow read: if true;
+      allow delete: if isAdmin();
+      // "No estoy en la lista": el jugador crea su propio perfil ya vinculado.
+      allow create: if isAdmin() || (
+        signedIn() && myPlayerId() == null
+        && request.resource.data.keys().hasOnly(['name', 'averageOverride', 'uid', 'createdAt'])
+        && validName(request.resource.data.name)
+        && request.resource.data.averageOverride == null
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && getAfter(me()).data.playerId == id
+      );
+      // Reclamar un jugador que todavía no tiene cuenta.
+      allow update: if isAdmin() || (
+        signedIn() && myPlayerId() == null
+        && resource.data.get('uid', null) == null
+        && onlyChanged(['uid'])
+        && request.resource.data.uid == request.auth.uid
+        && getAfter(me()).data.playerId == id
+      );
+    }
+    match /events/{id} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      // Asistencia a la práctica: un jugador con cuenta marca o quita solo su propio "voy".
+      allow update: if isAdmin() || (
+        myPlayerId() != null
+        && onlyChanged(['rsvp'])
+        && request.resource.data.get('rsvp', {}).diff(resource.data.get('rsvp', {})).affectedKeys().hasOnly([myPlayerId()])
+        && request.resource.data.get('rsvp', {}).get(myPlayerId(), true) == true
+      );
+    }
+    match /entries/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Fotos de los marcadores (comprimidas). Las sube el admin o un jugador con cuenta vinculada.
+    match /photos/{id} {
+      allow read: if true;
+      allow create: if isAdmin() || (
+        myPlayerId() != null
+        && request.resource.data.keys().hasOnly(['data', 'width', 'height', 'eventId', 'createdAt'])
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 750000
+        && request.resource.data.data.matches('^data:image/jpeg;base64,.*')
+        && (request.resource.data.eventId == null || docExists('events', request.resource.data.eventId))
+        && request.resource.data.createdAt == request.time
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // Juegos que un jugador sube de SU perfil: quedan pendientes hasta que el admin los apruebe.
+    // Van a un evento existente o, si no hay evento, a una fecha (el admin los pone en la práctica de ese día).
+    match /submissions/{id} {
+      allow read: if true;
+      allow create: if isAdmin() || (
+        myPlayerId() != null
+        && request.resource.data.playerId == myPlayerId()
+        && request.resource.data.keys().hasOnly(['playerId', 'eventId', 'date', 'scores', 'scanned', 'photoId', 'status', 'note', 'createdAt'])
+        && request.resource.data.status == 'pendiente'
+        && request.resource.data.note == null
+        && request.resource.data.scores is list
+        && request.resource.data.scores.size() > 0
+        && request.resource.data.scores.size() <= 10
+        && (request.resource.data.scanned == null
+            || (request.resource.data.scanned is list && request.resource.data.scanned.size() <= 10))
+        && ((request.resource.data.eventId is string && docExists('events', request.resource.data.eventId)
+              && request.resource.data.get('date', null) == null)
+            || (request.resource.data.eventId == null
+              && request.resource.data.get('date', null) is string
+              && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+        && existsAfter(/databases/$(database)/documents/photos/$(request.resource.data.photoId))
+        && request.resource.data.createdAt == request.time
+      );
+      allow update, delete: if isAdmin();
+    }
+  }
+}
