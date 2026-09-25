@@ -73,8 +73,11 @@ export function LiveActions({ feed, event }: { feed: LeagueFeed; event: BowlingE
   const pending = subs.some((s) => s.status === 'pendiente');
   const approved = subs.some((s) => s.status === 'aprobado');
   const staff = feed.isAdmin || feed.isScorer;
-  // El admin anota directo en la tabla; el jugador anota en su teléfono y lo envía a revisión.
-  const player = !!feed.playerId && !feed.isAdmin;
+  // Cada cuenta anota sus juegos en su teléfono y los envía a revisión (el dueño y los admins también
+  // juegan); el admin o el anotador, además, anota los de todos en la tabla. En un torneo, quien lo
+  // organiza juega solo si ya empezó sus juegos (si no, lo suyo es anotar los de todos).
+  const staffTorneo = staff && event.type === 'torneo';
+  const player = !!feed.playerId && (!staffTorneo || typed > 0 || subs.length > 0);
   const eventUrl = `/l/${feed.lid}/e/${event.id}`;
 
   const status: { icon: LucideIcon; text: string; tone: string } | null = !player
@@ -105,14 +108,14 @@ export function LiveActions({ feed, event }: { feed: LeagueFeed; event: BowlingE
               <PencilLine className="size-4" /> {typed > 0 ? 'Seguir anotando' : 'Anotar mis juegos'}
             </Link>
           ))}
+        {!feed.playerId && !staff && (
+          <Link to={`/l/${feed.lid}/perfil`} className={primary}>
+            <UserRound className="size-4" /> Preparar mi jugador
+          </Link>
+        )}
         {staff && (
           <Link to={`${eventUrl}?tab=juegos`} className={player ? secondary : primary}>
             <ClipboardList className="size-4" /> {feed.isAdmin ? 'Anotar juegos' : 'Anotar juegos del torneo'}
-          </Link>
-        )}
-        {!feed.playerId && !staff && (
-          <Link to={`/l/${feed.lid}/perfil`} className={primary}>
-            <UserRound className="size-4" /> Elegir mi jugador para anotar
           </Link>
         )}
       </div>

@@ -198,7 +198,7 @@ function MembersPanel() {
                   <div className="mt-1 flex flex-wrap gap-1">
                     {m.role !== 'member' && <Badge tone="accent">{roleLabel(m.role)}</Badge>}
                     {scorers && m.scorer && <Badge tone="warn">Anotador</Badge>}
-                    <Badge tone={m.playerId ? 'ok' : 'neutral'}>{m.playerId ? `Jugador: ${playerName.get(m.playerId) ?? '—'}` : 'Jugador sin elegir'}</Badge>
+                    <Badge tone={m.playerId ? 'ok' : 'neutral'}>{m.playerId ? `Jugador: ${playerName.get(m.playerId) ?? '—'}` : 'Su jugador se crea al abrir la liga'}</Badge>
                   </div>
                 </div>
                 {(canManage || canKick || canStepDown) && (

@@ -5,8 +5,11 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
+  getDocsFromServer,
   increment,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -20,7 +23,7 @@ import {
   type Query,
   type WriteBatch,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { scoreGame } from './bowling';
 import { DEFAULT_CUTS, normalizeName, playerStats, slots } from './stats';
 import type {
@@ -129,7 +132,6 @@ export const usePublicLeagues = () =>
 export const useAllLeagues = (enabled: boolean) =>
   useLiveQuery<League>(enabled ? 'leagues:all' : null, () => collection(db, 'leagues'));
 
-/** Varias ligas por id (las de mis membresías), en vivo. Las que no existen o no se pueden ver se omiten. */
 export interface PlayerInLeague {
   lid: string;
   playerId: string;
@@ -163,23 +165,38 @@ export function usePlayerAcrossLeagues(links: { lid: string; playerId: string }[
         loading: pairs.some(([lid]) => !entries.has(lid) || !events.has(lid)),
         error: null,
       });
-    const fail = (error: Error) => setState({ data: [], loading: false, error });
+    // Recién unido a una liga privada el servidor todavía no sabe que es miembro: se reintenta. Si una
+    // liga no se puede leer, se deja sin juegos (las demás se ven igual).
+    const skip = (lid: string) => (e: Error) => {
+      console.warn('[perfil global]', lid, e);
+      if (!entries.has(lid)) entries.set(lid, []);
+      if (!events.has(lid)) events.set(lid, []);
+      publish();
+    };
     const unsubs = pairs.flatMap(([lid, playerId]) => [
-      onSnapshot(
-        query(col(lid, 'entries'), where('playerId', '==', playerId)),
-        (snap) => {
-          entries.set(lid, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry));
-          publish();
-        },
-        fail,
+      listenRetry(
+        (onError) =>
+          onSnapshot(
+            query(col(lid, 'entries'), where('playerId', '==', playerId)),
+            (snap) => {
+              entries.set(lid, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry));
+              publish();
+            },
+            onError,
+          ),
+        skip(lid),
       ),
-      onSnapshot(
-        col(lid, 'events'),
-        (snap) => {
-          events.set(lid, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as BowlingEvent));
-          publish();
-        },
-        fail,
+      listenRetry(
+        (onError) =>
+          onSnapshot(
+            col(lid, 'events'),
+            (snap) => {
+              events.set(lid, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as BowlingEvent));
+              publish();
+            },
+            onError,
+          ),
+        skip(lid),
       ),
     ]);
     return () => unsubs.forEach((u) => u());
@@ -372,6 +389,7 @@ export function useLeagueFeeds(memberships: Member[], fromDate: string): Live<Le
   return state;
 }
 
+/** Varias ligas por id (las de mis membresías), en vivo. Las que no existen o no se pueden ver se omiten. */
 export function useLeaguesByIds(ids: string[]): Live<League[]> {
   const key = [...ids].sort().join(',');
   const [state, setState] = useState<Live<League[]>>({ data: [], loading: ids.length > 0, error: null });
@@ -556,7 +574,10 @@ export interface LeagueInput {
   requirePhoto: boolean;
 }
 
-/** Crea la liga y deja a quien la crea como dueño (las reglas exigen que ambas cosas vayan juntas). */
+/**
+ * Crea la liga y deja a quien la crea como dueño (las reglas exigen que ambas cosas vayan juntas).
+ * El dueño también juega: su jugador se crea enseguida (con su cuenta).
+ */
 export async function createLeague(owner: { uid: string; name: string }, input: LeagueInput) {
   const leagueRef = doc(collection(db, 'leagues'));
   const batch = writeBatch(db);
@@ -569,7 +590,20 @@ export async function createLeague(owner: { uid: string; name: string }, input: 
     playerId: null,
     joinedAt: serverTimestamp(),
   });
-  await batch.commit();
+  // Mientras se crea, el relleno de jugadores no la toca (leería la lista antes de que la liga exista).
+  setJoining(leagueRef.id, true);
+  const committed = batch.commit();
+  // Liga nueva: todavía no hay jugadores con quién vincularse. Va en cola después de la liga (sirve sin
+  // señal); si falla, se crea al abrir la liga.
+  ensurePlayer(leagueRef.id, owner.uid, owner.name, { fresh: true })
+    .catch((e) => console.error(e))
+    .finally(() => setJoining(leagueRef.id, false));
+  try {
+    await committed;
+  } catch (e) {
+    setJoining(leagueRef.id, false);
+    throw e;
+  }
   return leagueRef.id;
 }
 
@@ -654,7 +688,7 @@ export async function getInvite(code: string): Promise<Invite | null> {
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as Invite) : null;
 }
 
-// Ligas a las que la cuenta se está uniendo ahora (mientras se deja como jugador no se pregunta "¿Eres alguno?").
+// Ligas a las que la cuenta se está uniendo ahora (mientras se le crea su jugador).
 const joining = new Set<string>();
 const joiningListeners = new Set<() => void>();
 function setJoining(lid: string, on: boolean) {
@@ -662,6 +696,8 @@ function setJoining(lid: string, on: boolean) {
   else joining.delete(lid);
   joiningListeners.forEach((l) => l());
 }
+export const isJoining = (lid: string) => joining.has(lid);
+
 export function useJoining(lid: string): boolean {
   return useSyncExternalStore(
     (cb) => {
@@ -674,18 +710,25 @@ export function useJoining(lid: string): boolean {
 
 /**
  * Unirse a una liga (pública sin más, privada con el código de invitación). Entrar es participar:
- * queda como jugador. Devuelve su jugador, o null si tiene que elegir quién es en la lista.
+ * la cuenta juega con su propio jugador. Devuelve su jugador (o null si no se pudo crear todavía:
+ * se crea solo la próxima vez que abra la liga).
  */
-export async function joinLeague(lid: string, user: { uid: string; name: string }, code: string | null): Promise<string | null> {
+export async function joinLeague(
+  lid: string,
+  user: { uid: string; name: string },
+  code: string | null,
+  /** El jugador de la lista que dijo ser ("¿Eres tú? Crea tu cuenta"): se vincula si sigue sin cuenta. */
+  prefer: string | null = null,
+): Promise<string | null> {
   setJoining(lid, true);
   try {
-    return await joinAsPlayer(lid, user, code);
+    return await joinAsPlayer(lid, user, code, prefer);
   } finally {
     setJoining(lid, false);
   }
 }
 
-async function joinAsPlayer(lid: string, user: { uid: string; name: string }, code: string | null): Promise<string | null> {
+async function joinAsPlayer(lid: string, user: { uid: string; name: string }, code: string | null, prefer: string | null): Promise<string | null> {
   await setDoc(doc(db, 'members', memberId(lid, user.uid)), {
     leagueId: lid,
     uid: user.uid,
@@ -696,29 +739,60 @@ async function joinAsPlayer(lid: string, user: { uid: string; name: string }, co
     ...(code ? { code: code.trim().toUpperCase() } : {}),
   });
   try {
-    return await becomePlayer(lid, user.uid, user.name);
+    return await ensurePlayer(lid, user.uid, user.name, { prefer });
   } catch (e) {
-    // Ya es miembro; si esto falla, elige o crea su jugador en "Mis juegos".
+    // Ya es miembro; su jugador se crea solo la próxima vez que abra la liga.
     console.error(e);
     return null;
   }
 }
 
+// Jugadores que se están dejando listos ahora (una sola vez aunque se pida desde varios lados).
+const ensuring = new Map<string, Promise<string>>();
+
 /**
- * Deja la cuenta como jugador de la liga: si en la lista hay un jugador sin cuenta con su mismo nombre,
- * se vincula con él (conserva sus juegos); si no hay jugadores sin cuenta, crea el suyo. Si hay otros
- * sin cuenta (quizá es uno de ellos con otro nombre), devuelve null para preguntarle una vez quién es.
+ * La cuenta juega en la liga con su propia cuenta. Si en la lista hay un jugador sin cuenta con su mismo
+ * nombre (lo creó el admin, p. ej. de un torneo importado), se vincula con él y conserva sus juegos; si
+ * no, se crea su jugador. `fresh`: liga recién creada (no hay lista que mirar; sirve sin señal).
  */
-export async function becomePlayer(lid: string, uid: string, name: string): Promise<string | null> {
-  const snap = await getDocs(col(lid, 'players'));
-  const free = snap.docs.filter((d) => !d.get('uid'));
-  const same = free.filter((d) => normalizeName(String(d.get('name') ?? '')) === normalizeName(name));
-  if (same.length === 1) {
-    await claimPlayer(lid, uid, same[0].id);
-    return same[0].id;
+export function ensurePlayer(
+  lid: string,
+  uid: string,
+  name: string,
+  { fresh = false, prefer = null }: { fresh?: boolean; prefer?: string | null } = {},
+): Promise<string> {
+  const key = `${lid}:${uid}`;
+  const pending = ensuring.get(key);
+  // Una liga recién creada no espera a un intento anterior que pudo fallar (se reintenta sin mirar la lista).
+  if (pending) return fresh ? pending.catch(() => ensurePlayer(lid, uid, name, { fresh })) : pending;
+  const next = becomePlayer(lid, uid, name, fresh, prefer).finally(() => ensuring.delete(key));
+  ensuring.set(key, next);
+  return next;
+}
+
+async function becomePlayer(lid: string, uid: string, name: string, fresh: boolean, prefer: string | null): Promise<string> {
+  if (fresh) return createOwnPlayer(lid, uid, name);
+  // Lo que dice el servidor, no la copia del teléfono: en otro teléfono o pestaña quizá ya tiene su jugador.
+  // Sin señal no se crea nada (se intenta otra vez al abrir la liga).
+  const memberRef = doc(db, 'members', memberId(lid, uid));
+  const [me, snap] = await Promise.all([getDocFromServer(memberRef), getDocsFromServer(col(lid, 'players'))]);
+  const current = me.get('playerId') as string | null | undefined;
+  if (current) return current;
+  // Ya tiene un jugador suyo (se creó en otro lado y la membresía no llegó a apuntarlo).
+  const mine = snap.docs.find((d) => d.get('uid') === uid);
+  if (mine) {
+    await updateDoc(memberRef, { playerId: mine.id });
+    return mine.id;
   }
-  if (free.length === 0) return createOwnPlayer(lid, uid, name);
-  return null;
+  const free = snap.docs.filter((d) => !d.get('uid'));
+  const chosen = prefer ? free.find((d) => d.id === prefer) : undefined;
+  const same = free.filter((d) => normalizeName(String(d.get('name') ?? '')) === normalizeName(name));
+  const claim = chosen ?? (same.length === 1 ? same[0] : undefined);
+  if (claim) {
+    await claimPlayer(lid, uid, claim.id);
+    return claim.id;
+  }
+  return createOwnPlayer(lid, uid, name);
 }
 
 /** Salir de la liga (o que un admin saque a alguien): su jugador queda sin cuenta. */
@@ -778,7 +852,7 @@ export async function deletePlayer(lid: string, id: string, uid?: string | null)
   await commitInChunks(ops);
 }
 
-/** El miembro se vincula con un jugador de la liga que todavía no tiene cuenta. */
+/** La cuenta se vincula con un jugador de la liga que todavía no tiene cuenta (conserva sus juegos). */
 export async function claimPlayer(lid: string, uid: string, playerId: string) {
   const batch = writeBatch(db);
   batch.update(ref(lid, 'players', playerId), { uid });
@@ -786,7 +860,7 @@ export async function claimPlayer(lid: string, uid: string, playerId: string) {
   await batch.commit();
 }
 
-/** "No estoy en la lista": crea su propio jugador en la liga, ya vinculado. */
+/** Crea el jugador de la cuenta en la liga, ya vinculado. */
 export async function createOwnPlayer(lid: string, uid: string, name: string) {
   const playerId = newId(lid, 'players');
   const batch = writeBatch(db);
@@ -796,15 +870,67 @@ export async function createOwnPlayer(lid: string, uid: string, name: string) {
   return playerId;
 }
 
-/** Admin: separa la cuenta del jugador (se vinculó al perfil equivocado). */
-export async function unlinkAccount(lid: string, playerId: string, uid: string) {
+/**
+ * Admin: une la cuenta de un miembro con un jugador de la lista que no tiene cuenta (p. ej. el de un
+ * torneo importado, que se unió con otro nombre): sus juegos pasan a ser de la cuenta. Del jugador que
+ * tenía, lo pendiente (envíos por aprobar, "voy") pasa al nuevo; si nunca participó en un evento se borra,
+ * y si participó se queda en la lista sin cuenta. Se decide con lo que hay en el servidor (necesita señal).
+ */
+export async function linkAccountToPlayer(lid: string, member: Member, playerId: string): Promise<{ removedOld: boolean }> {
+  const [target, me] = await Promise.all([getDocFromServer(ref(lid, 'players', playerId)), getDocFromServer(doc(db, 'members', member.id))]);
+  if (!target.exists()) throw new Error('Ese jugador ya no existe.');
+  const owner = target.get('uid') as string | null | undefined;
+  if (owner && owner !== member.uid) throw new Error('Ese jugador ya tiene cuenta.');
+  const current = (me.get('playerId') as string | null | undefined) ?? null;
+  const old = current && current !== playerId ? current : null;
+  const ops: ((b: WriteBatch) => void)[] = [
+    (b) => b.update(ref(lid, 'players', playerId), { uid: member.uid }),
+    (b) => b.update(doc(db, 'members', member.id), { playerId }),
+  ];
+  let removedOld = false;
+  if (old) {
+    const [entries, subs, live, going] = await Promise.all([
+      getDocsFromServer(query(col(lid, 'entries'), where('playerId', '==', old), limit(1))),
+      getDocsFromServer(query(col(lid, 'submissions'), where('playerId', '==', old))),
+      getDocsFromServer(query(col(lid, 'live'), where('playerId', '==', old))),
+      getDocsFromServer(query(col(lid, 'events'), where(`rsvp.${old}`, '==', true))),
+    ]);
+    removedOld = entries.empty;
+    // Sus envíos pasan al jugador de la cuenta (los ya revisados solo si el viejo se borra: sus juegos se quedan con él).
+    subs.docs
+      .filter((d) => removedOld || d.get('status') === 'pendiente')
+      .forEach((d) => ops.push((b) => b.update(d.ref, { playerId })));
+    // Lo "en vivo" del viejo se quita; el "voy" pasa al nuevo.
+    live.docs.forEach((d) => ops.push((b) => b.delete(d.ref)));
+    going.docs.forEach((d) => ops.push((b) => b.update(d.ref, { [`rsvp.${old}`]: deleteField(), [`rsvp.${playerId}`]: true })));
+    ops.push((b) => (removedOld ? b.delete(ref(lid, 'players', old)) : b.update(ref(lid, 'players', old), { uid: null })));
+  }
+  await commitInChunks(ops);
+  return { removedOld };
+}
+
+/**
+ * Admin: separa la cuenta del jugador (se vinculó al perfil equivocado, p. ej. otra persona con el mismo
+ * nombre) y le da a la cuenta su propio jugador nuevo en el mismo momento: si quedara sin jugador, al abrir
+ * la liga se volvería a vincular sola con este mismo por el nombre.
+ */
+export async function unlinkAccount(lid: string, playerId: string, account: { uid: string; name: string }) {
   // Lo que esa cuenta publicó en vivo a nombre del jugador se quita (la anotó quien no era).
   const live = await getDocs(query(col(lid, 'live'), where('playerId', '==', playerId)));
+  const self = account.uid === auth.currentUser?.uid;
+  const own = newId(lid, 'players');
   const batch = writeBatch(db);
   live.docs.forEach((d) => batch.delete(d.ref));
   batch.update(ref(lid, 'players', playerId), { uid: null });
-  batch.update(doc(db, 'members', memberId(lid, uid)), { playerId: null });
+  if (self) {
+    // Uno mismo: las reglas no dejan tener dos jugadores propios a la vez; el nuevo va justo después.
+    batch.update(doc(db, 'members', memberId(lid, account.uid)), { playerId: null });
+  } else {
+    batch.set(ref(lid, 'players', own), { name: account.name.trim(), averageOverride: null, uid: account.uid, createdAt: serverTimestamp() });
+    batch.update(doc(db, 'members', memberId(lid, account.uid)), { playerId: own });
+  }
   await batch.commit();
+  if (self) await createOwnPlayer(lid, account.uid, account.name);
 }
 
 // ---------- Eventos ----------
@@ -1175,7 +1301,12 @@ export async function approveSubmission(
     });
     batch.update(ref(lid, 'events', event.id), { playerCount: increment(1) });
   }
-  batch.update(ref(lid, 'submissions', sub.id), { status: 'aprobado', eventId: event.id, reviewedAt: serverTimestamp() });
+  batch.update(ref(lid, 'submissions', sub.id), {
+    status: 'aprobado',
+    eventId: event.id,
+    reviewedAt: serverTimestamp(),
+    reviewedBy: auth.currentUser?.uid ?? null,
+  });
   // La foto de un envío por fecha queda asociada al evento (se borra con él).
   if (!sub.eventId && sub.photoId) batch.update(ref(lid, 'photos', sub.photoId), { eventId: event.id });
   await batch.commit();
@@ -1206,7 +1337,7 @@ export async function practiceForDate(lid: string, events: BowlingEvent[], date:
 }
 
 export async function rejectSubmission(lid: string, sub: Submission, note: string | null) {
-  await updateDoc(ref(lid, 'submissions', sub.id), { status: 'rechazado', note, reviewedAt: serverTimestamp() });
+  await updateDoc(ref(lid, 'submissions', sub.id), { status: 'rechazado', note, reviewedAt: serverTimestamp(), reviewedBy: auth.currentUser?.uid ?? null });
 }
 
 /**

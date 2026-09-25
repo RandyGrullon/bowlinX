@@ -32,7 +32,7 @@ export default function LeaguesPage() {
       return true;
     }, `Te uniste a ${l.name}`);
     setJoining(null);
-    if (ok) navigate(`/l/${l.id}/perfil`);
+    if (ok) navigate(`/l/${l.id}`);
   }
 
   return (

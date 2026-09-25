@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useNavigate } from 'react-router';
 import { Bell, CalendarDays, CheckCircle2, Globe, Inbox, Lightbulb, Lock, Megaphone, MessageCircle, PartyPopper, Trophy, XCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { useLeagueFeeds, useLeaguesByIds, useMyMemberships, type LeagueFeed } from '../lib/data';
+import { ensurePlayer, isJoining, useLeagueFeeds, useLeaguesByIds, useMyMemberships, type LeagueFeed } from '../lib/data';
 import { parseDate, toIsoDate } from '../lib/format';
 import { buildNotices, relativeTime, type Notice, type NoticeKind } from '../lib/notifications';
 import { notifyState, showSystemNotification, subscribePush } from '../lib/push';
@@ -46,10 +46,23 @@ function readSeen(uid: string | undefined): number {
   }
 }
 
+/** Membresías a las que ya se les intentó crear el jugador en esta sesión. */
+const backfilled = new Set<string>();
+
 /** Avisos de todas las ligas de la cuenta (se calculan de lo que pasa en cada liga; no se guardan aparte). */
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const memberships = useMyMemberships(user?.uid);
+  // Cada cuenta juega con su propia cuenta: a quien se unió antes sin jugador (o al dueño de una liga
+  // vieja) se le crea el suyo, una vez. Al unirse ahora se crea en el momento.
+  useEffect(() => {
+    if (!user) return;
+    for (const m of memberships.data) {
+      if (m.playerId || m.uid !== user.uid || isJoining(m.leagueId) || backfilled.has(m.id)) continue;
+      backfilled.add(m.id);
+      ensurePlayer(m.leagueId, m.uid, m.name).catch((e) => console.warn('[jugador] no se pudo crear', e));
+    }
+  }, [user, memberships.data]);
   const leagues = useLeaguesByIds(memberships.data.map((m) => m.leagueId));
   const today = useToday();
   // Desde ayer: el torneo de hoy y lo que viene.

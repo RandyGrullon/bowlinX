@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { CalendarDays, Camera, CheckCircle2, ChevronRight, Clock, Flame, Globe, Hash, Layers, LogOut, Share2, Target, Trophy, Upload, UserPlus, XCircle } from 'lucide-react';
+import { CalendarCheck, CalendarDays, Camera, CheckCircle2, ChevronRight, Clock, Flame, Globe, Hash, Layers, LogOut, Share2, Sigma, Target, Trophy, Upload, UserPlus, XCircle } from 'lucide-react';
 import { frameStats } from '../lib/bowling';
 import { useAuth } from '../lib/auth';
 import { removeMember, useEntriesOfEvents, useEvents, usePlayer, usePlayerEntries, usePlayerSubmissions } from '../lib/data';
@@ -72,6 +72,8 @@ export default function PlayerPage({ playerId: own }: { playerId?: string }) {
   const isOwner = !!myPlayerId && myPlayerId === p.id;
   const unclaimed = !p.uid;
   const stats = playerStats(mine);
+  // Eventos a los que fue (con al menos un juego que cuenta).
+  const attended = mine.filter((e) => e.scores?.some((sc, i) => sc != null && e.photos?.[i] != null)).length;
   const average = effectiveAverage(p, stats);
   const tournaments = mine.filter((e) => eventById.get(e.eventId)!.type === 'torneo');
   const practices = mine.filter((e) => eventById.get(e.eventId)!.type === 'practica');
@@ -151,7 +153,7 @@ export default function PlayerPage({ playerId: own }: { playerId?: string }) {
           <Button variant="ghost" size="sm" className="absolute top-3 right-3" onClick={share} aria-label="Compartir perfil" title="Compartir perfil" icon={<Share2 className="size-4" />} />
           {!user && unclaimed && (
             <Link
-              to={`/login?modo=registro&next=${encodeURIComponent(`${base}/perfil`)}`}
+              to={`/login?modo=registro&next=${encodeURIComponent(`${base}/perfil?soy=${p.id}`)}`}
               className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-line px-4 text-sm font-medium hover:bg-surface-2 sm:w-auto"
             >
               <UserPlus className="size-4" /> ¿Eres tú? Crea tu cuenta
@@ -159,11 +161,13 @@ export default function PlayerPage({ playerId: own }: { playerId?: string }) {
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat icon={<Target className="size-4" />} label={p.averageOverride != null ? 'Promedio (fijo)' : 'Promedio'} value={average || '—'} />
+          <Stat icon={<Sigma className="size-4" />} label="Puntaje total" value={stats.pins ? stats.pins.toLocaleString('es-DO') : '—'} />
           <Stat icon={<Hash className="size-4" />} label="Juegos" value={stats.games} />
           <Stat icon={<Flame className="size-4" />} label="Mejor juego" value={stats.high || '—'} />
           <Stat icon={<Layers className="size-4" />} label="Mejor serie (3)" value={stats.highSeries || '—'} />
+          <Stat icon={<CalendarCheck className="size-4" />} label="Asistencia" value={attended} sub={attended === 1 ? 'evento' : 'eventos'} />
         </div>
 
         {framed.length > 0 && (

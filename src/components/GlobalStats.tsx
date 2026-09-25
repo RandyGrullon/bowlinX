@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router';
-import { CalendarDays, ChevronRight, Flame, Globe, Hash, Layers, Target, Trophy } from 'lucide-react';
+import { CalendarCheck, CalendarDays, ChevronRight, Flame, Globe, Hash, Layers, Sigma, Target, Trophy } from 'lucide-react';
 import { frameStats } from '../lib/bowling';
 import { usePlayerAcrossLeagues } from '../lib/data';
 import { eventLabel, formatDate } from '../lib/format';
@@ -17,8 +17,8 @@ interface Played {
 }
 
 /**
- * Perfil global: los números de la cuenta sumando todas las ligas (y torneos sin liga)
- * donde está vinculada a un jugador. Solo cuentan los juegos verificados, igual que en cada liga.
+ * Perfil global: puntaje y promedio de la cuenta sumando todas sus ligas (y torneos sin liga), y los de
+ * cada liga. La cuenta es su jugador en cada liga. Solo cuentan los juegos verificados, igual que en cada liga.
  */
 export function GlobalStats({ memberships, leagues }: { memberships: Member[]; leagues: League[] }) {
   const links = memberships.filter((m) => m.playerId).map((m) => ({ lid: m.leagueId, playerId: m.playerId! }));
@@ -37,9 +37,21 @@ export function GlobalStats({ memberships, leagues }: { memberships: Member[]; l
   );
 
   if (!links.length) {
+    // Recién unido: su jugador se está creando (si no aparece, "Mis juegos" lo vuelve a intentar).
+    if (memberships.length) {
+      return (
+        <Card className="p-4 text-sm text-muted">
+          Estamos preparando tu jugador. Si no aparece en unos segundos, ábrelo en{' '}
+          <Link to={`/l/${memberships[0].leagueId}/perfil`} className="font-medium text-accent">
+            Mis juegos
+          </Link>
+          .
+        </Card>
+      );
+    }
     return (
       <Card className="p-4 text-sm text-muted">
-        Cuando elijas tu jugador en una liga (en su pestaña Perfil), aquí verás tus números de todas tus ligas juntas.
+        Únete a una liga o crea la tuya: aquí verás tu puntaje y tu promedio de todas tus ligas juntas.
       </Card>
     );
   }
@@ -70,8 +82,9 @@ export function GlobalStats({ memberships, leagues }: { memberships: Member[]; l
     )
     .slice(-30);
 
-  const perLeague = across.data
-    .map(({ lid, entries }) => ({ lid, name: nameOf.get(lid) ?? 'Liga', stats: playerStats(entries) }))
+  // Por liga con los mismos juegos que el total (así las ligas suman el global); también las que no tienen juegos.
+  const perLeague = links
+    .map(({ lid }) => ({ lid, name: nameOf.get(lid) ?? 'Liga', stats: playerStats(played.filter((p) => p.lid === lid).map((p) => p.entry)) }))
     .sort((a, b) => b.stats.games - a.stats.games || a.name.localeCompare(b.name));
 
   const byYear = new Map<string, Entry[]>();
@@ -83,11 +96,13 @@ export function GlobalStats({ memberships, leagues }: { memberships: Member[]; l
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat icon={<Target className="size-4" />} label="Promedio" value={all.autoAverage ?? '—'} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat icon={<Target className="size-4" />} label="Promedio global" value={all.autoAverage ?? '—'} />
+        <Stat icon={<Sigma className="size-4" />} label="Puntaje total" value={all.pins ? all.pins.toLocaleString('es-DO') : '—'} />
         <Stat icon={<Hash className="size-4" />} label="Juegos" value={all.games} />
         <Stat icon={<Flame className="size-4" />} label="Mejor juego" value={all.high || '—'} />
         <Stat icon={<Layers className="size-4" />} label="Mejor serie (3)" value={all.highSeries || '—'} />
+        <Stat icon={<CalendarCheck className="size-4" />} label="Asistencia" value={counted.length} sub={counted.length === 1 ? 'evento' : 'eventos'} />
       </div>
 
       <div className="flex flex-wrap gap-2 text-xs">
@@ -134,6 +149,7 @@ export function GlobalStats({ memberships, leagues }: { memberships: Member[]; l
                 <div className="truncate font-medium">{name}</div>
                 <div className="text-xs text-muted tabular-nums">
                   {stats.games} {stats.games === 1 ? 'juego' : 'juegos'}
+                  {stats.pins > 0 && ` · puntaje ${stats.pins.toLocaleString('es-DO')}`}
                   {stats.high > 0 && ` · mejor ${stats.high}`}
                   {stats.pending > 0 && ` · ${stats.pending} por verificar`}
                 </div>

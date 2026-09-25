@@ -42,7 +42,7 @@ export default function JoinPage() {
       return true;
     }, `¡Bienvenido a ${invite.leagueName}!`);
     setBusy(false);
-    if (ok) navigate(`/l/${invite.leagueId}/perfil`);
+    if (ok) navigate(`/l/${invite.leagueId}`);
   }
 
   return (

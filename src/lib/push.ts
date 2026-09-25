@@ -68,7 +68,8 @@ export async function subscribePush(uid: string): Promise<boolean> {
  */
 export async function unsubscribePush(uid: string) {
   try {
-    const reg = await registration();
+    // Sin esperar al service worker: si no hay registro, no hay suscripción que quitar (cerrar sesión es al instante).
+    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
     const sub = await reg?.pushManager?.getSubscription();
     if (!sub) return;
     const id = await subId(sub.endpoint);

@@ -89,7 +89,7 @@ function SubmissionCard({
   player?: Player;
   entry: Entry | null;
 }) {
-  const { lid, league } = useLeagueCtx();
+  const { lid, league, myPlayerId } = useLeagueCtx();
   const run = useAction();
   const { toast } = useFeedback();
   const photo = usePhoto(lid, sub.photoId);
@@ -187,6 +187,8 @@ function SubmissionCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate font-semibold">{player.name}</span>
+            {/* El dueño y los admins también juegan: sus propios envíos se aprueban aquí igual. */}
+            {sub.playerId === myPlayerId && <Badge>Tú</Badge>}
             {unverified && (
               <Badge tone="warn">
                 <AlertTriangle className="size-3" /> Sin foto

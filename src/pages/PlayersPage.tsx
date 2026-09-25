@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { BadgeCheck, ExternalLink, Link2, Plus, Search, ShieldCheck, Trash2, Unlink, UserRound } from 'lucide-react';
-import { createPlayer, deletePlayer, unlinkAccount, updatePlayer, useAllEntries, useLeagueMembers, usePlayers } from '../lib/data';
+import { createPlayer, deletePlayer, linkAccountToPlayer, unlinkAccount, updatePlayer, useAllEntries, useLeagueMembers, usePlayers } from '../lib/data';
 import { roleLabel, useLeagueCtx } from '../lib/league';
 import { playerStats, type PlayerStats } from '../lib/stats';
 import type { Entry, Member, Player } from '../lib/types';
 import { useAction, useFeedback } from '../components/feedback';
 import { playerUrl, shareLink } from '../components/share';
 import { Avatar } from '../components/Avatar';
-import { Badge, Button, Card, Empty, Field, Input, ListSkeleton, LoadError, Modal } from '../components/ui';
+import { Badge, Button, Card, Empty, Field, Input, ListSkeleton, LoadError, Modal, Select } from '../components/ui';
 
 export function useStatsByPlayer(entries: Entry[]) {
   return useMemo(() => {
@@ -33,7 +33,10 @@ export default function PlayersPage() {
   const entries = useAllEntries(lid);
   const stats = useStatsByPlayer(entries.data);
   const [q, setQ] = useState('');
-  const [editing, setEditing] = useState<Player | 'new' | null>(null);
+  // Por id: el modal muestra el jugador en vivo (si alguien se vincula mientras está abierto, se ve).
+  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
+  const editing = editingId === 'new' ? 'new' : (players.data.find((p) => p.id === editingId) ?? null);
+  const setEditing = (p: Player | 'new' | null) => setEditingId(p === 'new' ? 'new' : (p?.id ?? null));
 
   const filtered = players.data.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
 
@@ -144,7 +147,8 @@ export default function PlayersPage() {
               <div key={u.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
                 <Avatar name={u.name} className="size-8 text-xs" />
                 <div className="min-w-0 flex-1 truncate font-medium">{u.name}</div>
-                {u.role !== 'member' ? <Badge tone="accent">{roleLabel(u.role)}</Badge> : <Badge>Todavía no elige su jugador</Badge>}
+                {u.role !== 'member' && <Badge tone="accent">{roleLabel(u.role)}</Badge>}
+                <Badge>Se crea al abrir la liga</Badge>
               </div>
             ))}
           </Card>
@@ -154,8 +158,10 @@ export default function PlayersPage() {
       <PlayerFormModal
         player={editing === 'new' ? null : editing}
         account={editing && editing !== 'new' && editing.uid ? memberByUid.get(editing.uid) ?? null : null}
-        open={editing != null}
+        open={editingId != null}
         stats={editing && editing !== 'new' ? stats.get(editing.id) ?? noStats : noStats}
+        members={members.data}
+        players={players.data}
         onClose={() => setEditing(null)}
       />
     </div>
@@ -167,12 +173,16 @@ function PlayerFormModal({
   player,
   account,
   stats,
+  members,
+  players,
   onClose,
 }: {
   open: boolean;
   player: Player | null;
   account: Member | null;
   stats: PlayerStats;
+  members: Member[];
+  players: Player[];
   onClose: () => void;
 }) {
   const { lid } = useLeagueCtx();
@@ -245,34 +255,90 @@ function PlayerFormModal({
           <Input type="number" inputMode="numeric" min={0} max={300} value={avg} onChange={(e) => setAvg(e.target.value)} placeholder="Automático" />
         </Field>
       </form>
-      {player && <AccountSection player={player} account={account} onDone={onClose} />}
+      {player && <AccountSection player={player} account={account} members={members} players={players} onDone={onClose} />}
     </Modal>
   );
 }
 
-/** Cuenta vinculada al jugador: un admin la desvincula si se eligió mal. Los roles se cambian en Miembros. */
-function AccountSection({ player, account, onDone }: { player: Player; account: Member | null; onDone: () => void }) {
+/**
+ * Cuenta del jugador. Cada cuenta juega con su propio jugador (se crea al unirse); un jugador sin cuenta
+ * (lo agregó el admin o vino de un torneo importado) se puede unir con la cuenta de quien es, y una cuenta
+ * mal vinculada se separa. Los roles se cambian en Miembros.
+ */
+function AccountSection({
+  player,
+  account,
+  members,
+  players,
+  onDone,
+}: {
+  player: Player;
+  account: Member | null;
+  members: Member[];
+  players: Player[];
+  onDone: () => void;
+}) {
   const { lid } = useLeagueCtx();
   const run = useAction();
   const { confirm } = useFeedback();
+  const [who, setWho] = useState('');
+  const nameOf = (id: string | null) => players.find((p) => p.id === id)?.name ?? null;
+
   if (!player.uid) {
+    const candidates = members.filter((m) => m.playerId !== player.id);
+    async function link() {
+      const picked = candidates.find((c) => c.id === who);
+      if (!picked) return;
+      const ok = await confirm({
+        title: 'Vincular con la cuenta',
+        message: `${player.name} pasa a ser el jugador de ${picked.name}: sus juegos cuentan en su perfil.${
+          picked.playerId
+            ? ` De su jugador de ahora (${nameOf(picked.playerId) ?? picked.name}), lo pendiente (envíos por aprobar, "voy") pasa a ${player.name}; si nunca jugó un evento se borra, y si jugó se queda en la lista sin cuenta.`
+            : ''
+        }`,
+        confirmText: 'Vincular',
+      });
+      if (!ok) return;
+      // La cuenta como está ahora (pudo cambiar mientras se confirmaba); el resto se decide con el servidor.
+      const m = members.find((c) => c.id === picked.id) ?? picked;
+      onDone();
+      await run(() => linkAccountToPlayer(lid, m, player.id), `${player.name} ahora es de ${m.name}`);
+    }
     return (
-      <p className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5 text-xs text-muted">
-        Sin cuenta. Quien se una a la liga puede elegirse en la lista para subir sus juegos.
-      </p>
+      <div className="mt-4 flex flex-col gap-2 rounded-xl bg-surface-2 px-3 py-2.5">
+        <p className="text-xs text-muted">
+          Sin cuenta. Si es alguien que ya se unió a la liga (quizá con otro nombre), vincúlalo con su cuenta y sus juegos pasan a su perfil.
+        </p>
+        {candidates.length > 0 && (
+          <div className="flex gap-2">
+            <Select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Cuenta" className="min-w-0 flex-1">
+              <option value="">— Elegir cuenta —</option>
+              {candidates.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                  {m.playerId && nameOf(m.playerId) && nameOf(m.playerId) !== m.name ? ` (hoy: ${nameOf(m.playerId)})` : ''}
+                </option>
+              ))}
+            </Select>
+            <Button size="sm" icon={<Link2 className="size-4" />} disabled={!who} onClick={link}>
+              Vincular
+            </Button>
+          </div>
+        )}
+      </div>
     );
   }
 
   async function unlink() {
     const ok = await confirm({
       title: 'Desvincular cuenta',
-      message: `${account?.name ?? 'La cuenta'} deja de estar vinculada a ${player.name} y podrá elegir su jugador otra vez.`,
+      message: `${account?.name ?? 'La cuenta'} deja de estar vinculada a ${player.name} y pasa a jugar con un jugador nuevo, con su cuenta. ${player.name} y sus juegos se quedan en la lista sin cuenta.`,
       confirmText: 'Desvincular',
       danger: true,
     });
     if (!ok) return;
     onDone();
-    await run(() => unlinkAccount(lid, player.id, player.uid!), 'Cuenta desvinculada');
+    await run(() => unlinkAccount(lid, player.id, { uid: player.uid!, name: account?.name ?? player.name }), 'Cuenta desvinculada');
   }
 
   return (

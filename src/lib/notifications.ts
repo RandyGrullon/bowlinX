@@ -102,7 +102,8 @@ export function buildNotices(feeds: LeagueFeed[], leagues: League[], today: stri
 
     // Lo que un admin aprobó o rechazó de lo que subiste (último mes).
     for (const s of feed.mySubs) {
-      if (s.status === 'pendiente') continue;
+      // Lo que revisó uno mismo (el dueño y los admins también juegan) no es aviso.
+      if (s.status === 'pendiente' || s.reviewedBy === feed.uid) continue;
       const reviewed = ms(s.reviewedAt, 0);
       if (!reviewed || now - reviewed > 30 * DAY) continue;
       const ev = s.eventId ? eventsById.get(s.eventId) : undefined;
@@ -189,8 +190,10 @@ export function buildNotices(feeds: LeagueFeed[], leagues: League[], today: stri
     }
 
     // Admin: lo que falta por aprobar en su liga (un solo aviso por liga).
-    if (feed.isAdmin && feed.pending.length) {
-      const n = feed.pending.length;
+    // Sus propios envíos no cuentan (los ve igual en Aprobar, marcados "Tú").
+    const othersPending = feed.pending.filter((s) => s.playerId !== feed.playerId);
+    if (feed.isAdmin && othersPending.length) {
+      const n = othersPending.length;
       out.push({
         ...base,
         id: `pendientes:${feed.lid}`,
@@ -198,7 +201,7 @@ export function buildNotices(feeds: LeagueFeed[], leagues: League[], today: stri
         title: `${n} ${n === 1 ? 'envío' : 'envíos'} por aprobar`,
         body: 'Juegos que subieron los jugadores esperan tu revisión.',
         to: `/l/${feed.lid}/admin?tab=aprobar`,
-        time: Math.max(...feed.pending.map((s) => ms(s.createdAt, now))),
+        time: Math.max(...othersPending.map((s) => ms(s.createdAt, now))),
       });
     }
   }

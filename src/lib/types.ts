@@ -161,6 +161,8 @@ export interface Submission {
   createdAt?: { toMillis(): number } | null;
   /** Cuándo lo aprobó o rechazó un admin. */
   reviewedAt?: { toMillis(): number } | null;
+  /** Qué cuenta lo revisó (un admin que aprueba sus propios juegos no recibe aviso). */
+  reviewedBy?: string | null;
 }
 
 /**

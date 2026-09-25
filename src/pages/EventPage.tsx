@@ -70,7 +70,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const entries = useEventEntries(lid, eventId);
   const players = usePlayers(lid);
   const events = useEvents(myPlayerId ? lid : undefined);
-  const mySubs = usePlayerSubmissions(isAdmin ? undefined : lid, myPlayerId ?? undefined);
+  const mySubs = usePlayerSubmissions(lid, myPlayerId ?? undefined);
   // Me gusta y comentarios de los juegos (se ven al abrir el juego de alguien).
   const reactions = useReactionsOfEvents(lid, eventId ? [eventId] : []);
   const comments = useCommentsOfEvents(lid, eventId ? [eventId] : []);
@@ -93,6 +93,8 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const isTorneo = ev.type === 'torneo';
   const back = isTorneo ? base : `${base}?ver=practicas`;
   const mine = myPlayerId ? entries.data.find((e) => e.playerId === myPlayerId) ?? null : null;
+  // En un torneo, quien lo organiza (o anota) juega solo si está inscrito; en una práctica, todos.
+  const playsHere = !!myPlayerId && (!isTorneo || !canScore || !!mine);
   const nameOf = (e: Entry) => players.data.find((p) => p.id === e.playerId)?.name ?? '(jugador borrado)';
   const me = myPlayerId ? players.data.find((p) => p.id === myPlayerId) : undefined;
   const today = toIsoDate(now);
@@ -203,9 +205,9 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
         )
       ))}
 
-      <Tour name="evento" steps={EVENT_TOUR} when={!isAdmin && !!myPlayerId && ev.date <= today} />
-      {/* Jugador: sus juegos primero (los anota mientras juega y los envía a revisión). */}
-      {!isAdmin && myPlayerId && !entries.loading && !mySubs.loading && (
+      <Tour name="evento" steps={EVENT_TOUR} when={playsHere && ev.date <= today} />
+      {/* Sus juegos primero (los anota mientras juega y los envía a revisión). El dueño y los admins también juegan. */}
+      {playsHere && !entries.loading && !mySubs.loading && (
         <MyGamesPanel
           event={ev}
           playerId={myPlayerId}

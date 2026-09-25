@@ -299,6 +299,60 @@ describe('vincular jugador', () => {
     b.set(doc(db, 'leagues/priv/players/otro'), { name: 'Luis 2', averageOverride: null, uid: 'u-luis', createdAt: serverTimestamp() });
     await assertFails(b.commit());
   });
+  it('el dueño también juega: al crear la liga se crea su jugador con su cuenta', async () => {
+    const db = as('u-nuevo');
+    await createLeague(db, 'u-nuevo', 'mia');
+    const b = writeBatch(db);
+    b.set(doc(db, 'leagues/mia/players/yo'), { name: 'Nuevo', averageOverride: null, uid: 'u-nuevo', createdAt: serverTimestamp() });
+    b.update(doc(db, 'members/mia_u-nuevo'), { playerId: 'yo' });
+    await assertSucceeds(b.commit());
+  });
+  it('un admin también tiene su jugador (se crea con su cuenta)', async () => {
+    const db = sofi();
+    const b = writeBatch(db);
+    b.set(doc(db, 'leagues/priv/players/sofi'), { name: 'Sofi', averageOverride: null, uid: 'u-sofi', createdAt: serverTimestamp() });
+    b.update(doc(db, 'members/priv_u-sofi'), { playerId: 'sofi' });
+    await assertSucceeds(b.commit());
+  });
+  it('un admin no se crea un segundo jugador propio (dos teléfonos a la vez), pero sí jugadores de la lista', async () => {
+    const own = (id: string) => {
+      const db = sofi();
+      const b = writeBatch(db);
+      b.set(doc(db, `leagues/priv/players/${id}`), { name: 'Sofi', averageOverride: null, uid: 'u-sofi', createdAt: serverTimestamp() });
+      b.update(doc(db, 'members/priv_u-sofi'), { playerId: id });
+      return b.commit();
+    };
+    await assertSucceeds(own('sofi-1'));
+    await assertFails(own('sofi-2'));
+    await assertSucceeds(setDoc(doc(sofi(), 'leagues/priv/players/nuevo'), { name: 'Invitado', averageOverride: null, createdAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(sofi(), 'leagues/priv/players/sofi-1'), { name: 'Sofía' }));
+  });
+  it('el admin separa una cuenta mal vinculada y le da su jugador nuevo en el mismo momento', async () => {
+    const db = sofi();
+    const b = writeBatch(db);
+    b.update(doc(db, 'leagues/priv/players/luis'), { uid: null });
+    b.set(doc(db, 'leagues/priv/players/luis-nuevo'), { name: 'Luis', averageOverride: null, uid: 'u-luis', createdAt: serverTimestamp() });
+    b.update(doc(db, 'members/priv_u-luis'), { playerId: 'luis-nuevo' });
+    await assertSucceeds(b.commit());
+  });
+  it('el admin une la cuenta de alguien con un jugador de la lista sin cuenta (y borra el que se le creó)', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'leagues/priv/players/ana-auto'), { name: 'Ana', averageOverride: null, uid: 'u-ana' });
+      await updateDoc(doc(db, 'members/priv_u-ana'), { playerId: 'ana-auto' });
+    });
+    const link = (db: Firestore) => {
+      const b = writeBatch(db);
+      b.update(doc(db, 'leagues/priv/players/pedro'), { uid: 'u-ana' });
+      b.update(doc(db, 'members/priv_u-ana'), { playerId: 'pedro' });
+      b.delete(doc(db, 'leagues/priv/players/ana-auto'));
+      return b.commit();
+    };
+    // Un miembro no puede hacerlo por otro (ni por sí mismo con un jugador que no es suyo).
+    await assertFails(link(luis()));
+    await assertFails(link(ana()));
+    await assertSucceeds(link(sofi()));
+  });
   it('al salir suelta su jugador', async () => {
     const db = luis();
     const b = writeBatch(db);

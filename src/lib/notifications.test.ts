@@ -259,13 +259,34 @@ describe('avisos', () => {
 
   it('al admin le avisa lo pendiente por aprobar, uno por liga', () => {
     const notices = buildNotices(
-      [feed({ isAdmin: true, pending: [sub('x', 'pendiente', { createdAt: at(now - HOUR) }), sub('y', 'pendiente', { createdAt: at(now - 2 * HOUR) })] })],
+      [
+        feed({
+          isAdmin: true,
+          pending: [
+            sub('x', 'pendiente', { playerId: 'p2', createdAt: at(now - HOUR) }),
+            sub('y', 'pendiente', { playerId: 'p3', createdAt: at(now - 2 * HOUR) }),
+          ],
+        }),
+      ],
       [league('l1')],
       today,
       now,
     );
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ kind: 'por-aprobar', title: '2 envíos por aprobar', to: '/l/l1/admin?tab=aprobar', time: now - HOUR });
+  });
+
+  it('el dueño y los admins también juegan: no se avisan de sus propios envíos ni de lo que aprobaron ellos', () => {
+    const mine = sub('m', 'pendiente', { createdAt: at(now - HOUR) });
+    const selfApproved = sub('a', 'aprobado', { reviewedAt: at(now - HOUR), reviewedBy: 'u1' });
+    const byOther = sub('b', 'aprobado', { reviewedAt: at(now - HOUR), reviewedBy: 'u9' });
+    const notices = buildNotices(
+      [feed({ isAdmin: true, pending: [mine], mySubs: [mine, selfApproved, byOther], events: [event('e1', 'practica', '2026-09-22')] })],
+      [league('l1')],
+      today,
+      now,
+    );
+    expect(notices.map((n) => [n.kind, n.id])).toEqual([['aprobado', 'envio:l1:b']]);
   });
 
   it('dice de qué evento eran los juegos aunque el evento ya pasó', () => {

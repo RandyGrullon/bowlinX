@@ -241,12 +241,12 @@ function JoinBanner() {
   async function join() {
     if (!auth.user) return navigate(`/login?next=${encodeURIComponent(base)}`);
     setBusy(true);
-    const ok = await run(async () => {
+    // Al unirse ya es jugador: se queda en la liga (la página cambia sola).
+    await run(async () => {
       await joinLeague(lid, { uid: auth.user!.uid, name: displayName(auth) }, null);
       return true;
     }, `Te uniste a ${league.name}`);
     setBusy(false);
-    if (ok) navigate(`${base}/perfil`);
   }
 
   return (

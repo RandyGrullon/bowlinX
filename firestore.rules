@@ -119,8 +119,9 @@ service cloud.firestore {
       match /players/{pid} {
         allow read: if canRead(lid);
         allow delete: if isLeagueAdmin(lid);
-        // "No estoy en la lista": el miembro crea su propio jugador ya vinculado.
-        allow create: if isLeagueAdmin(lid) || (
+        // Cada cuenta juega con su propio jugador (uno solo): el miembro lo crea ya vinculado. Un admin crea
+        // jugadores de la lista, o el suyo propio solo si todavía no tiene (dos teléfonos no le crean dos).
+        allow create: if (isLeagueAdmin(lid) && (request.resource.data.get('uid', null) != request.auth.uid || myPlayer(lid) == null)) || (
           isMember(lid) && myPlayer(lid) == null
           && request.resource.data.keys().hasOnly(['name', 'averageOverride', 'uid', 'createdAt'])
           && validName(request.resource.data.name)
