@@ -8,7 +8,12 @@ export interface LeagueCtx {
   member: Member | null;
   /** Dueño o admin de la liga, o superadmin. */
   isAdmin: boolean;
+  /** Dueño (o superadmin): el único que da o quita permisos. */
   isOwner: boolean;
+  /** Anotador del torneo (solo en torneos sin liga): anota los juegos de todos. */
+  isScorer: boolean;
+  /** Puede anotar juegos de cualquiera: admin o anotador. */
+  canScore: boolean;
   /** Jugador de la liga vinculado a la cuenta. */
   myPlayerId: string | null;
   /** Ruta base de la liga: `/l/<id>`. */

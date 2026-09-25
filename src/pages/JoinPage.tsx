@@ -4,6 +4,7 @@ import { LogIn, Ticket, UserPlus } from 'lucide-react';
 import { displayName, useAuth } from '../lib/auth';
 import { getInvite, joinLeague, useMembership } from '../lib/data';
 import type { Invite } from '../lib/types';
+import { BackLink } from '../components/BackLink';
 import { AppShell } from '../components/Shell';
 import { useAction } from '../components/feedback';
 import { Button, Card, Empty, Loading } from '../components/ui';
@@ -46,6 +47,7 @@ export default function JoinPage() {
 
   return (
     <AppShell>
+      <BackLink fallback="/" className="-ml-1.5 mb-3" />
       {!invite ? (
         <Empty icon={<Ticket className="size-8" />} title="Esta invitación no sirve">
           El código no existe o lo cambiaron. Pídele a un admin de la liga el link nuevo.

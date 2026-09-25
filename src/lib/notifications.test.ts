@@ -50,7 +50,7 @@ const sub = (id: string, status: Submission['status'], extra: Partial<Submission
   ...extra,
 });
 
-const feed = (extra: Partial<LeagueFeed>): LeagueFeed => ({ lid: 'l1', playerId: 'p1', isAdmin: false, events: [], mySubs: [], pending: [], ...extra });
+const feed = (extra: Partial<LeagueFeed>): LeagueFeed => ({ lid: 'l1', playerId: 'p1', isAdmin: false, isScorer: false, events: [], mySubs: [], pending: [], ...extra });
 
 describe('avisos', () => {
   it('dice de qué liga es cada aviso y si es privada o torneo sin liga', () => {

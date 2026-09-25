@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Delete, Eraser, Grid3x3, Hash, Minus, Plus, SlidersHorizontal, Target } from 'lucide-react';
-import { bitCount, scoreGame, standingMask, standingNow } from '../../lib/bowling';
+import { Delete, Eraser, Grid3x3, Hash, Minus, Plus, SlidersHorizontal, Target, X } from 'lucide-react';
+import { bitCount, replaceRoll, scoreGame, standingMask, standingNow } from '../../lib/bowling';
 import { isValidScore } from '../../lib/stats';
 import type { GameFrames } from '../../lib/types';
 import { Button, Input, cx } from '../ui';
@@ -29,6 +29,7 @@ function savedMode(): Mode | null {
  * Anotar un juego de 3 formas:
  * - Pines: se tocan los pines que cayeron en cada tiro y la hoja se calcula sola.
  * - Teclado: se escribe cada tiro (X, /, números); se bloquea lo imposible (tras un 8 solo 0, 1 o spare).
+ *   Se toca un tiro de la hoja para corregirlo y se deja presionado para borrarlo.
  * - Total: solo el puntaje final, con la barra o escribiéndolo.
  */
 export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChange: (v: ScoreValue & { ready: boolean }) => void }) {
@@ -39,6 +40,10 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
   const [masks, setMasks] = useState<(number | null)[]>(initial.frames?.masks ?? initial.frames?.rolls.map(() => null) ?? []);
   const [total, setTotal] = useState(initial.score != null ? String(initial.score) : '');
   const [knocked, setKnocked] = useState(0);
+  // Teclado: tiro elegido para corregir (null = se anota al final) y si está vacío esperando el valor:
+  // 'borrado' = lo borró dejándolo presionado; 'falta' = la corrección pide ese tiro (quedó en 0 por ahora).
+  const [sel, setSel] = useState<number | null>(null);
+  const [hole, setHole] = useState<'borrado' | 'falta' | null>(null);
 
   const game = scoreGame(rolls);
   const now = standingNow(rolls);
@@ -52,11 +57,45 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
       onChange({
         score: game.complete ? game.score : null,
         frames: rolls.length ? { rolls, ...(withMasks ? { masks } : {}) } : null,
-        ready: game.complete,
+        // Con un tiro borrado sin volver a escribir, el juego no está listo.
+        ready: game.complete && !hole,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, rolls, masks, total]);
+  }, [mode, rolls, masks, total, hole]);
+
+  function endEdit() {
+    setSel(null);
+    setHole(null);
+  }
+
+  /** Tecla del teclado: anota al final, o corrige el tiro elegido. */
+  function typeRoll(pins: number) {
+    if (sel == null) return push(pins, null);
+    const r = replaceRoll(rolls, masks, sel, pins, null);
+    setRolls(r.rolls);
+    setMasks(r.extra);
+    setSel(r.next);
+    setHole(r.next != null ? 'falta' : null);
+  }
+
+  /** Tocar un tiro de la hoja: se elige para corregirlo (otra vez, o una casilla vacía: seguir al final). */
+  function selectRoll(i: number | null) {
+    if (i == null || i === sel) return endEdit();
+    setSel(i);
+    setHole(null);
+  }
+
+  /** Dejar presionado un tiro: el último se quita; uno de en medio queda vacío para escribir el correcto. */
+  function eraseRoll(i: number) {
+    if (i === rolls.length - 1) {
+      undo();
+      endEdit();
+      return;
+    }
+    setSel(i);
+    setHole('borrado');
+  }
 
   function pickMode(m: Mode) {
     try {
@@ -66,6 +105,7 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
     }
     if (m === 'total' && game.complete && total.trim() === '') setTotal(String(game.score));
     setKnocked(0);
+    endEdit();
     setMode(m);
   }
 
@@ -85,10 +125,17 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
     setRolls([]);
     setMasks([]);
     setKnocked(0);
+    endEdit();
   }
 
   const remaining = game.frames.length && !game.complete ? 10 - game.frames.filter((f) => f.total != null).length : 0;
   const standing = standingMask(rolls, masks);
+  // Tiro que se corrige: cuadro, número de tiro y qué se puede escribir ahí.
+  const editing = sel != null ? game.frames.findIndex((f) => sel >= f.start && sel < f.start + f.rolls.length) : -1;
+  const at = sel != null ? standingNow(rolls.slice(0, sel)) : now;
+  const keyboard = mode === 'teclado';
+  // Con un tiro vacío, el puntaje grande es el que se sabe sin él (igual que los acumulados de la hoja).
+  const shownScore = hole && sel != null ? scoreGame(rolls.slice(0, sel)).score : game.score;
 
   return (
     <div className="flex flex-col gap-4">
@@ -119,10 +166,23 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
 
       {mode !== 'total' && (
         <>
-          <FramesGrid rolls={rolls} cursor={now?.frame ?? null} />
+          <FramesGrid
+            rolls={rolls}
+            cursor={sel == null ? (now?.frame ?? null) : null}
+            selected={keyboard ? sel : null}
+            blank={keyboard && hole ? sel : null}
+            onSelect={keyboard ? selectRoll : undefined}
+            onLongPress={keyboard ? eraseRoll : undefined}
+          />
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted">
-              {game.complete ? (
+              {keyboard && sel != null && editing >= 0 ? (
+                <span className="text-accent">
+                  {hole === 'borrado' ? 'Borraste el' : hole === 'falta' ? 'Escribe el' : 'Corrigiendo el'} tiro{' '}
+                  {sel - game.frames[editing].start + 1} del cuadro <b>{editing + 1}</b>
+                  {hole === 'borrado' ? ': escribe el correcto' : ''}
+                </span>
+              ) : game.complete ? (
                 <span className="font-medium text-ok">Juego completo</span>
               ) : now ? (
                 <>
@@ -131,7 +191,7 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
                 </>
               ) : null}
             </span>
-            <span className="text-2xl font-bold tabular-nums">{rolls.length ? game.score : '—'}</span>
+            <span className="text-2xl font-bold tabular-nums">{rolls.length ? shownScore : '—'}</span>
           </div>
         </>
       )}
@@ -159,18 +219,25 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
       )}
 
       {mode === 'teclado' && (
-        <Keypad
-          standing={now?.standing ?? -1}
-          fresh={now?.fresh ?? false}
-          onRoll={(n) => push(n, null)}
-        />
+        <>
+          <Keypad standing={at?.standing ?? -1} fresh={at?.fresh ?? false} onRoll={typeRoll} />
+          {rolls.length > 0 && sel == null && (
+            <p className="-mt-2 text-center text-xs text-muted">Toca un tiro de la hoja para corregirlo · déjalo presionado para borrarlo</p>
+          )}
+        </>
       )}
 
       {mode !== 'total' && rolls.length > 0 && (
         <div className="flex justify-between gap-2">
-          <Button variant="ghost" size="sm" icon={<Delete className="size-4" />} onClick={undo}>
-            Deshacer tiro
-          </Button>
+          {sel != null ? (
+            <Button variant="ghost" size="sm" icon={<X className="size-4" />} onClick={endEdit}>
+              {hole === 'borrado' ? 'Dejar como estaba' : hole === 'falta' ? 'Dejarlo en −' : 'Listo'}
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" icon={<Delete className="size-4" />} onClick={undo}>
+              Deshacer tiro
+            </Button>
+          )}
           <Button variant="ghost" size="sm" className="text-danger" icon={<Eraser className="size-4" />} onClick={clear}>
             Empezar de nuevo
           </Button>

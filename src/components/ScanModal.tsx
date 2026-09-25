@@ -45,7 +45,7 @@ export function ScanModal({
   players: Player[];
   focusPlayerId?: string | null;
 }) {
-  const { lid } = useLeagueCtx();
+  const { lid, isAdmin } = useLeagueCtx();
   const run = useAction();
   const { toast } = useFeedback();
   const [photo, setPhoto] = useState<CompressedImage | null>(null);
@@ -64,7 +64,8 @@ export function ScanModal({
 
   const entryOf = (playerId: string) => entries.find((e) => e.playerId === playerId) ?? null;
   const participants = players.filter((p) => entries.some((e) => e.playerId === p.id));
-  const others = players.filter((p) => !entries.some((e) => e.playerId === p.id));
+  // Solo el admin inscribe jugadores nuevos al guardar; el anotador usa los que ya están.
+  const others = isAdmin ? players.filter((p) => !entries.some((e) => e.playerId === p.id)) : [];
 
   /** Fila a mano: arranca en el primer juego sin verificar, con lo que ya estaba anotado como borrador. */
   function manualRow(playerId = ''): RowDraft {

@@ -16,12 +16,13 @@ import { playerUrl, shareLink } from '../components/share';
 import { Badge, Button, Card, Empty, ListSkeleton, LoadError, Skeleton, StatsSkeleton, cx } from '../components/ui';
 import { Stat } from '../components/event/StandingsTab';
 import { Avatar } from '../components/Avatar';
+import { BackLink } from '../components/BackLink';
 
 /** Página del jugador en la liga: sus números, torneos y prácticas. En una liga pública se ve sin login. */
 export default function PlayerPage({ playerId: own }: { playerId?: string }) {
   const params = useParams();
   const playerId = own ?? params.playerId;
-  const { lid, base, myPlayerId, member } = useLeagueCtx();
+  const { lid, base, myPlayerId, member, league } = useLeagueCtx();
   const { user } = useAuth();
   const { toast, confirm } = useFeedback();
   const run = useAction();
@@ -132,6 +133,8 @@ export default function PlayerPage({ playerId: own }: { playerId?: string }) {
     <>
       <div className="flex flex-col gap-6">
         <div className="relative flex flex-col items-center gap-3 overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-accent-soft via-surface to-surface p-5 text-center sm:flex-row sm:pr-14 sm:text-left">
+          {/* Jugador abierto desde el ranking o un evento (no "Mis juegos"): flecha para volver. */}
+          {!own && <BackLink fallback={league.kind === 'torneo' ? base : `${base}/ranking`} className="absolute top-3 left-3 sm:static sm:self-start" />}
           <Avatar name={p.name} className="size-16 text-xl ring-4 ring-surface" />
           <div className="flex-1">
             <h1 className="text-2xl font-bold tracking-tight">{p.name}</h1>

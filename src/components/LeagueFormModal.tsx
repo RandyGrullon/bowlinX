@@ -172,7 +172,7 @@ export function LeagueForm({
           </span>
           <span className="text-muted">
             {form.requirePhoto
-              ? 'Un juego cuenta en promedios y clasificaciones solo cuando se verifica con la foto.'
+              ? 'Un juego cuenta en promedios y clasificaciones cuando se verifica con la foto. Si un jugador lo envía sin foto, el admin decide si lo acepta.'
               : 'Los juegos que anota un admin cuentan de una; los que suben los jugadores igual se aprueban.'}
           </span>
         </span>

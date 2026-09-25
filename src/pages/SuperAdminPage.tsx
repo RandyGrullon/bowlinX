@@ -4,6 +4,7 @@ import { ChevronRight, Crown, DatabaseBackup, Globe, Lock, Search, Trophy, Users
 import { isFixedSuper } from '../lib/admins';
 import { useAuth } from '../lib/auth';
 import { setSuperadmin, useAllLeagues, useUsers } from '../lib/data';
+import { BackLink } from '../components/BackLink';
 import { AppShell } from '../components/Shell';
 import { Avatar } from '../components/Avatar';
 import { useAction, useFeedback } from '../components/feedback';
@@ -66,6 +67,7 @@ export default function SuperAdminPage() {
     <AppShell>
       <div className="flex flex-col gap-5">
         <div className="flex items-start gap-3">
+          <BackLink fallback="/" className="-ml-1.5 mt-2" />
           <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent text-accent-fg">
             <Crown className="size-5" />
           </div>

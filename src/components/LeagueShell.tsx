@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useParams } from 'react-router';
-import { CalendarDays, Check, ChevronDown, Globe, Lock, Medal, Plus, Settings2, Trophy, UserRound } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, Globe, Lock, Medal, Plus, Settings2, Target, Trophy } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useLeague, useLeaguesByIds, useMembership, useMyMemberships, useSubmissions } from '../lib/data';
 import { LeagueContext, rememberLeague, type LeagueCtx } from '../lib/league';
@@ -9,7 +9,7 @@ import { Empty, Loading, Modal, cx } from './ui';
 
 /**
  * Marco de lo que pasa dentro de una liga: arriba el nombre (toca para cambiar de liga) y sus
- * pestañas (Eventos · Ranking · Perfil · Admin); abajo, la barra de la app (Home · Eventos · Perfil).
+ * pestañas (Calendario · Ranking · Mis juegos · Admin); abajo, la barra de la app (Home · Eventos · Perfil).
  */
 export default function LeagueShell() {
   const { lid } = useParams();
@@ -21,13 +21,17 @@ export default function LeagueShell() {
   const ctx = useMemo<LeagueCtx | null>(() => {
     if (!lid || !league.data) return null;
     const member = membership.data;
-    const isOwner = member?.role === 'owner';
+    const isOwner = isSuper || member?.role === 'owner';
+    const isAdmin = isOwner || member?.role === 'admin';
+    const isScorer = league.data.kind === 'torneo' && member?.scorer === true;
     return {
       lid,
       league: league.data,
       member,
       isOwner,
-      isAdmin: isSuper || isOwner || member?.role === 'admin',
+      isAdmin,
+      isScorer,
+      canScore: isAdmin || isScorer,
       myPlayerId: member?.playerId ?? null,
       base: `/l/${lid}`,
     };
@@ -70,9 +74,9 @@ export default function LeagueShell() {
   const base = ctx.base;
   const standalone = ctx.league.kind === 'torneo';
   const tabs = [
-    standalone ? { to: base, label: 'Torneo', icon: Trophy, end: true } : { to: base, label: 'Eventos', icon: CalendarDays, end: true },
+    standalone ? { to: base, label: 'Torneo', icon: Trophy, end: true } : { to: base, label: 'Calendario', icon: CalendarDays, end: true },
     ...(standalone ? [] : [{ to: `${base}/ranking`, label: 'Ranking', icon: Medal }]),
-    { to: `${base}/perfil`, label: 'Perfil', icon: UserRound },
+    { to: `${base}/perfil`, label: 'Mis juegos', icon: Target },
     ...(ctx.isAdmin ? [{ to: `${base}/admin`, label: 'Admin', icon: Settings2, count: pending }] : []),
   ];
 

@@ -4,6 +4,8 @@ import {
   CalendarRange,
   Camera,
   ChevronDown,
+  ClipboardList,
+  ClipboardX,
   Clock,
   DatabaseBackup,
   Globe,
@@ -24,7 +26,17 @@ import {
   Users,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { deleteLeague, deleteOldPhotos, removeMember, setMemberRole, updateLeague, useLeagueMembers, usePlayers, useSubmissions } from '../lib/data';
+import {
+  deleteLeague,
+  deleteOldPhotos,
+  removeMember,
+  setMemberRole,
+  setMemberScorer,
+  updateLeague,
+  useLeagueMembers,
+  usePlayers,
+  useSubmissions,
+} from '../lib/data';
 import { formatDate } from '../lib/format';
 import { rememberLeague, roleLabel, useLeagueCtx, whatsappUrl } from '../lib/league';
 import type { Member } from '../lib/types';
@@ -71,9 +83,12 @@ export default function AdminPage() {
 
 const ORDER: Record<Member['role'], number> = { owner: 0, admin: 1, member: 2 };
 
-/** Miembros: nombrar o quitar admins y sacar gente de la liga. */
+/**
+ * Miembros y permisos. Todos los que entran son jugadores; el dueño nombra admins (y, en torneos
+ * sin liga, anotadores). Un miembro puede tener varios roles (p. ej. anotador y jugador).
+ */
 function MembersPanel() {
-  const { lid } = useLeagueCtx();
+  const { lid, league, isOwner } = useLeagueCtx();
   const { user } = useAuth();
   const run = useAction();
   const { confirm } = useFeedback();
@@ -81,37 +96,63 @@ function MembersPanel() {
   const players = usePlayers(lid);
   const playerName = useMemo(() => new Map(players.data.map((p) => [p.id, p.name])), [players.data]);
   const sorted = [...members.data].sort((a, b) => ORDER[a.role] - ORDER[b.role] || a.name.localeCompare(b.name));
+  // Anotadores: solo en torneos sin liga (en la liga de práctica no hacen falta).
+  const scorers = league.kind === 'torneo';
+  const where = scorers ? 'el torneo' : 'la liga';
 
   async function toggleAdmin(m: Member) {
     const makeAdmin = m.role === 'member';
     const ok = await confirm({
       title: makeAdmin ? `¿Hacer admin a ${m.name}?` : `¿Quitarle admin a ${m.name}?`,
       message: makeAdmin
-        ? 'Podrá crear torneos y prácticas, anotar y aprobar juegos, manejar jugadores, invitar y nombrar admins.'
+        ? scorers
+          ? 'Podrá inscribir jugadores, armar equipos, anotar y aprobar juegos, e invitar. Los permisos los sigues manejando tú.'
+          : 'Podrá crear torneos y prácticas, anotar y aprobar juegos, manejar jugadores e invitar. Los permisos los sigues manejando tú.'
         : m.uid === user?.uid
-          ? 'Vas a dejar de administrar esta liga.'
-          : 'Sigue en la liga como miembro.',
+          ? `Vas a dejar de administrar ${where}; sigues como jugador. Para volver a ser admin, el dueño te lo tiene que dar.`
+          : `Sigue en ${where} como jugador.`,
       confirmText: makeAdmin ? 'Hacer admin' : 'Quitar admin',
       danger: !makeAdmin,
     });
     if (ok) await run(() => setMemberRole(m, makeAdmin ? 'admin' : 'member'), makeAdmin ? `${m.name} ahora es admin` : 'Listo');
   }
 
+  async function toggleScorer(m: Member) {
+    const make = !m.scorer;
+    const ok = await confirm({
+      title: make ? `¿Hacer anotador a ${m.name}?` : `¿Quitarle anotador a ${m.name}?`,
+      message: make
+        ? 'Podrá anotar los juegos de los inscritos (a mano, por cuadros o con la foto) y nada más. Sigue siendo jugador.'
+        : 'Ya no podrá anotar los juegos del torneo.',
+      confirmText: make ? 'Hacer anotador' : 'Quitar anotador',
+      danger: !make,
+    });
+    if (ok) await run(() => setMemberScorer(m, make), make ? `${m.name} ahora es anotador` : 'Listo');
+  }
+
   async function kick(m: Member) {
     const ok = await confirm({
-      title: `¿Sacar a ${m.name} de la liga?`,
-      message: 'Sus juegos se quedan; su cuenta deja de estar en la liga. Si es privada, necesitará otra invitación para volver.',
+      title: `¿Sacar a ${m.name} de ${where}?`,
+      message: `Sus juegos se quedan; su cuenta deja de estar en ${where}. Si es privado, necesitará otra invitación para volver.`,
       confirmText: 'Sacar',
       danger: true,
     });
-    if (ok) await run(() => removeMember(m), `${m.name} ya no está en la liga`);
+    if (ok) await run(() => removeMember(m), `${m.name} ya no está en ${where}`);
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h2 className="text-lg font-bold tracking-tight">Miembros</h2>
-        <p className="text-sm text-muted">Los admins manejan todo en la liga. El dueño no se puede quitar.</p>
+        <h2 className="text-lg font-bold tracking-tight">Miembros y permisos</h2>
+        <p className="text-sm text-muted">
+          Todos son jugadores. <b className="text-fg">Admin</b> maneja {where}
+          {scorers && (
+            <>
+              ; <b className="text-fg">Anotador</b> solo anota los juegos
+            </>
+          )}
+          . {isOwner ? 'Solo tú, como dueño, das o quitas permisos.' : 'Solo el dueño da o quita permisos.'}
+        </p>
       </div>
       {members.error ? (
         <LoadError error={members.error} />
@@ -119,35 +160,68 @@ function MembersPanel() {
         <ListSkeleton rows={4} />
       ) : (
         <Card className="stagger divide-y divide-line overflow-hidden">
-          {sorted.map((m, i) => (
-            <div key={m.id} style={{ '--i': i } as CSSProperties} className="flex flex-wrap items-center gap-3 px-4 py-3">
-              <Avatar name={m.name} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">{m.name}</span>
-                  {m.role !== 'member' && <Badge tone="accent">{roleLabel(m.role)}</Badge>}
-                  {m.uid === user?.uid && <Badge>Tú</Badge>}
+          {sorted.map((m, i) => {
+            const me = m.uid === user?.uid;
+            // El dueño saca a cualquiera; un admin solo a los que no tienen permisos (ni admin ni anotador).
+            const canKick = !me && m.role !== 'owner' && (isOwner || (m.role === 'member' && !m.scorer));
+            const canManage = isOwner && m.role !== 'owner';
+            // Un admin puede dejar de serlo por su cuenta.
+            const canStepDown = me && m.role === 'admin' && !isOwner;
+            return (
+              <div key={m.id} style={{ '--i': i } as CSSProperties} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <Avatar name={m.name} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate font-medium">{m.name}</span>
+                    {me && <Badge>Tú</Badge>}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {m.role !== 'member' && <Badge tone="accent">{roleLabel(m.role)}</Badge>}
+                    {scorers && m.scorer && <Badge tone="warn">Anotador</Badge>}
+                    <Badge tone={m.playerId ? 'ok' : 'neutral'}>{m.playerId ? `Jugador: ${playerName.get(m.playerId) ?? '—'}` : 'Jugador sin elegir'}</Badge>
+                  </div>
                 </div>
-                <div className="truncate text-xs text-muted">
-                  {m.playerId ? `Jugador: ${playerName.get(m.playerId) ?? '—'}` : 'Todavía no elige su jugador'}
-                </div>
+                {(canManage || canKick || canStepDown) && (
+                  <div className="flex flex-wrap justify-end gap-1">
+                    {canStepDown && (
+                      <Button size="sm" icon={<ShieldOff className="size-4" />} onClick={() => toggleAdmin(m)}>
+                        Dejar de ser admin
+                      </Button>
+                    )}
+                    {canManage && (
+                      <Button
+                        size="sm"
+                        icon={m.role === 'admin' ? <ShieldOff className="size-4" /> : <ShieldCheck className="size-4" />}
+                        onClick={() => toggleAdmin(m)}
+                      >
+                        {m.role === 'admin' ? 'Quitar admin' : 'Hacer admin'}
+                      </Button>
+                    )}
+                    {canManage && scorers && (
+                      <Button
+                        size="sm"
+                        icon={m.scorer ? <ClipboardX className="size-4" /> : <ClipboardList className="size-4" />}
+                        onClick={() => toggleScorer(m)}
+                      >
+                        {m.scorer ? 'Quitar anotador' : 'Hacer anotador'}
+                      </Button>
+                    )}
+                    {canKick && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-danger"
+                        aria-label={`Sacar a ${m.name}`}
+                        title={`Sacar de ${where}`}
+                        icon={<UserMinus className="size-4" />}
+                        onClick={() => kick(m)}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
-              {m.role !== 'owner' && (
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    icon={m.role === 'admin' ? <ShieldOff className="size-4" /> : <ShieldCheck className="size-4" />}
-                    onClick={() => toggleAdmin(m)}
-                  >
-                    {m.role === 'admin' ? 'Quitar admin' : 'Hacer admin'}
-                  </Button>
-                  {m.uid !== user?.uid && (
-                    <Button size="sm" variant="ghost" className="text-danger" aria-label={`Sacar a ${m.name}`} title="Sacar de la liga" icon={<UserMinus className="size-4" />} onClick={() => kick(m)} />
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </Card>
       )}
     </div>

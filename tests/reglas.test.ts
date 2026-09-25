@@ -204,11 +204,19 @@ describe('crear ligas y unirse', () => {
 });
 
 describe('roles en la liga', () => {
-  it('el dueño y los admins nombran o quitan admins, pero no tocan al dueño', async () => {
+  it('solo el dueño nombra o quita admins, y nadie toca al dueño', async () => {
     await assertSucceeds(updateDoc(doc(org(), 'members/priv_u-ana'), { role: 'admin' }));
-    await assertSucceeds(updateDoc(doc(sofi(), 'members/priv_u-luis'), { role: 'admin' }));
-    await assertFails(updateDoc(doc(sofi(), 'members/priv_u-org'), { role: 'member' }));
-    await assertFails(updateDoc(doc(sofi(), 'members/priv_u-ana'), { role: 'owner' }));
+    await assertSucceeds(updateDoc(doc(org(), 'members/priv_u-sofi'), { role: 'member' }));
+    await assertFails(updateDoc(doc(org(), 'members/priv_u-org'), { role: 'member' }));
+    await assertFails(updateDoc(doc(org(), 'members/priv_u-ana'), { role: 'owner' }));
+  });
+  it('un admin que no es dueño no cambia permisos, pero sí desvincula jugadores', async () => {
+    await assertFails(updateDoc(doc(sofi(), 'members/priv_u-luis'), { role: 'admin' }));
+    await assertFails(updateDoc(doc(sofi(), 'members/priv_u-ana'), { scorer: true }));
+    await assertSucceeds(updateDoc(doc(sofi(), 'members/priv_u-luis'), { playerId: null }));
+  });
+  it('el superadmin también maneja los permisos', async () => {
+    await assertSucceeds(updateDoc(doc(dios(), 'members/priv_u-luis'), { role: 'admin' }));
   });
   it('un miembro no se sube de rol', async () => {
     await assertFails(updateDoc(doc(ana(), 'members/priv_u-ana'), { role: 'admin' }));
@@ -251,6 +259,11 @@ describe('roles en la liga', () => {
     await assertSucceeds(deleteDoc(doc(ana(), 'members/priv_u-ana')));
     await assertSucceeds(deleteDoc(doc(sofi(), 'members/priv_u-luis')));
     await assertFails(deleteDoc(doc(luis(), 'members/priv_u-sofi')));
+  });
+  it('un admin no saca a otro admin (eso es quitarle permisos); el dueño sí', async () => {
+    await assertSucceeds(updateDoc(doc(org(), 'members/priv_u-ana'), { role: 'admin' }));
+    await assertFails(deleteDoc(doc(sofi(), 'members/priv_u-ana')));
+    await assertSucceeds(deleteDoc(doc(org(), 'members/priv_u-sofi')));
   });
 });
 
@@ -308,8 +321,8 @@ describe('juegos', () => {
     await assertFails(sendGames(ana(), 'priv', 'pedro'));
     await assertFails(sendGames(luis(), 'priv', 'luis', { status: 'aprobado' }));
   });
-  it('sin foto solo si la liga no la exige', async () => {
-    await assertFails(
+  it('sin foto se puede enviar (el admin decide), aunque la liga exija foto', async () => {
+    await assertSucceeds(
       setDoc(doc(luis(), 'leagues/priv/submissions/s2'), { ...sub('luis', null), createdAt: serverTimestamp() }),
     );
     await env.withSecurityRulesDisabled(async (ctx) => {
@@ -337,6 +350,56 @@ describe('juegos', () => {
     await assertFails(updateDoc(doc(luis(), 'leagues/priv/events/e1'), { 'rsvp.pedro': true }));
     await assertFails(updateDoc(doc(ana(), 'leagues/priv/events/e1'), { 'rsvp.ana': true }));
     await assertFails(updateDoc(doc(luis(), 'leagues/priv/events/e1'), { name: 'hack' }));
+  });
+});
+
+describe('anotadores', () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'leagues/copa'), { ...leagueData('u-org', 'public'), kind: 'torneo', name: 'Copa' });
+      await setDoc(doc(db, 'members/copa_u-org'), member('copa', 'u-org', 'owner'));
+      await setDoc(doc(db, 'members/copa_u-sofi'), member('copa', 'u-sofi', 'admin'));
+      await setDoc(doc(db, 'members/copa_u-luis'), { ...member('copa', 'u-luis', 'member', 'jl'), scorer: true });
+      await setDoc(doc(db, 'members/copa_u-ana'), member('copa', 'u-ana', 'member'));
+      await setDoc(doc(db, 'leagues/copa/events/t1'), { type: 'torneo', name: 'Copa', date: '2026-10-01', games: 3, teams: {}, playerCount: 1 });
+      await setDoc(doc(db, 'leagues/copa/entries/t1_px'), { eventId: 't1', playerId: 'px', teamId: null, scores: [null, null, null], photos: [null, null, null] });
+      // En una liga normal la marca de anotador no vale.
+      await setDoc(doc(db, 'members/priv_u-ana'), { ...member('priv', 'u-ana', 'member'), scorer: true });
+    });
+  });
+  it('el dueño del torneo nombra anotadores; un admin no', async () => {
+    await assertFails(updateDoc(doc(sofi(), 'members/copa_u-ana'), { scorer: true }));
+    await assertFails(updateDoc(doc(ana(), 'members/copa_u-ana'), { scorer: true }));
+    await assertSucceeds(updateDoc(doc(org(), 'members/copa_u-ana'), { scorer: true }));
+    await assertSucceeds(updateDoc(doc(org(), 'members/copa_u-luis'), { scorer: false }));
+  });
+  it('el anotador anota pinos, fotos y cuadros de quien ya está inscrito', async () => {
+    await assertSucceeds(
+      updateDoc(doc(luis(), 'leagues/copa/entries/t1_px'), { scores: [190, null, null], photos: ['sin-foto', null, null], 'frames.0': { rolls: [10] } }),
+    );
+    await assertSucceeds(
+      setDoc(doc(luis(), 'leagues/copa/photos/fx'), { data: 'data:image/jpeg;base64,AAAA', width: 1, height: 1, eventId: 't1', createdAt: serverTimestamp() }),
+    );
+  });
+  it('el anotador no cambia equipos, no inscribe ni crea eventos', async () => {
+    await assertFails(updateDoc(doc(luis(), 'leagues/copa/entries/t1_px'), { teamId: 'eq1' }));
+    await assertFails(setDoc(doc(luis(), 'leagues/copa/entries/t1_nuevo'), { eventId: 't1', playerId: 'nuevo', scores: [], photos: [] }));
+    await assertFails(setDoc(doc(luis(), 'leagues/copa/events/t2'), { type: 'torneo' }));
+    await assertFails(updateDoc(doc(luis(), 'leagues/copa'), { name: 'Mía' }));
+  });
+  it('un admin no saca a un anotador (sería quitarle el permiso); el dueño sí', async () => {
+    await assertFails(deleteDoc(doc(sofi(), 'members/copa_u-luis')));
+    await assertSucceeds(deleteDoc(doc(sofi(), 'members/copa_u-ana')));
+    await assertSucceeds(deleteDoc(doc(org(), 'members/copa_u-luis')));
+  });
+  it('un admin deja de ser admin por su cuenta, pero no se nombra anotador', async () => {
+    await assertFails(updateDoc(doc(sofi(), 'members/copa_u-sofi'), { scorer: true }));
+    await assertFails(updateDoc(doc(luis(), 'members/copa_u-luis'), { role: 'admin' }));
+    await assertSucceeds(updateDoc(doc(sofi(), 'members/copa_u-sofi'), { role: 'member' }));
+  });
+  it('en una liga (no torneo) no hay anotadores', async () => {
+    await assertFails(updateDoc(doc(ana(), 'leagues/priv/entries/e1_luis'), { scores: [300] }));
   });
 });
 

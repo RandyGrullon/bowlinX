@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   collection,
   deleteField,
@@ -21,7 +21,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { scoreGame } from './bowling';
-import { DEFAULT_CUTS, playerStats, slots } from './stats';
+import { DEFAULT_CUTS, normalizeName, playerStats, slots } from './stats';
 import type {
   BowlingEvent,
   Entry,
@@ -175,6 +175,8 @@ export interface LeagueFeed {
   lid: string;
   playerId: string | null;
   isAdmin: boolean;
+  /** Anotador del torneo (torneos sin liga). */
+  isScorer: boolean;
   /** Eventos de ayer en adelante (lo que viene). */
   events: BowlingEvent[];
   /** Envíos del jugador de la cuenta. */
@@ -215,15 +217,15 @@ function listenRetry(subscribe: (onError: (e: Error) => void) => () => void, onG
  */
 export function useLeagueFeeds(memberships: Member[], fromDate: string): Live<LeagueFeed[]> {
   const key = memberships
-    .map((m) => `${m.leagueId}:${m.playerId ?? '-'}:${m.role === 'member' ? 'm' : 'a'}`)
+    .map((m) => `${m.leagueId}:${m.playerId ?? '-'}:${m.role === 'member' ? 'm' : 'a'}:${m.scorer ? 's' : '-'}`)
     .sort()
     .join(',');
   const [state, setState] = useState<Live<LeagueFeed[]>>({ data: [], loading: memberships.length > 0, error: null });
   useEffect(() => {
     const items = key
       ? key.split(',').map((k) => {
-          const [lid, pid, role] = k.split(':');
-          return { lid, playerId: pid === '-' ? null : pid, isAdmin: role === 'a' };
+          const [lid, pid, role, scorer] = k.split(':');
+          return { lid, playerId: pid === '-' ? null : pid, isAdmin: role === 'a', isScorer: scorer === 's' };
         })
       : [];
     if (!items.length) {
@@ -555,8 +557,38 @@ export async function getInvite(code: string): Promise<Invite | null> {
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as Invite) : null;
 }
 
-/** Unirse a una liga: pública sin más, privada con el código de invitación. */
-export async function joinLeague(lid: string, user: { uid: string; name: string }, code: string | null) {
+// Ligas a las que la cuenta se está uniendo ahora (mientras se deja como jugador no se pregunta "¿Eres alguno?").
+const joining = new Set<string>();
+const joiningListeners = new Set<() => void>();
+function setJoining(lid: string, on: boolean) {
+  if (on) joining.add(lid);
+  else joining.delete(lid);
+  joiningListeners.forEach((l) => l());
+}
+export function useJoining(lid: string): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      joiningListeners.add(cb);
+      return () => joiningListeners.delete(cb);
+    },
+    () => joining.has(lid),
+  );
+}
+
+/**
+ * Unirse a una liga (pública sin más, privada con el código de invitación). Entrar es participar:
+ * queda como jugador. Devuelve su jugador, o null si tiene que elegir quién es en la lista.
+ */
+export async function joinLeague(lid: string, user: { uid: string; name: string }, code: string | null): Promise<string | null> {
+  setJoining(lid, true);
+  try {
+    return await joinAsPlayer(lid, user, code);
+  } finally {
+    setJoining(lid, false);
+  }
+}
+
+async function joinAsPlayer(lid: string, user: { uid: string; name: string }, code: string | null): Promise<string | null> {
   await setDoc(doc(db, 'members', memberId(lid, user.uid)), {
     leagueId: lid,
     uid: user.uid,
@@ -566,6 +598,30 @@ export async function joinLeague(lid: string, user: { uid: string; name: string 
     joinedAt: serverTimestamp(),
     ...(code ? { code: code.trim().toUpperCase() } : {}),
   });
+  try {
+    return await becomePlayer(lid, user.uid, user.name);
+  } catch (e) {
+    // Ya es miembro; si esto falla, elige o crea su jugador en "Mis juegos".
+    console.error(e);
+    return null;
+  }
+}
+
+/**
+ * Deja la cuenta como jugador de la liga: si en la lista hay un jugador sin cuenta con su mismo nombre,
+ * se vincula con él (conserva sus juegos); si no hay jugadores sin cuenta, crea el suyo. Si hay otros
+ * sin cuenta (quizá es uno de ellos con otro nombre), devuelve null para preguntarle una vez quién es.
+ */
+export async function becomePlayer(lid: string, uid: string, name: string): Promise<string | null> {
+  const snap = await getDocs(col(lid, 'players'));
+  const free = snap.docs.filter((d) => !d.get('uid'));
+  const same = free.filter((d) => normalizeName(String(d.get('name') ?? '')) === normalizeName(name));
+  if (same.length === 1) {
+    await claimPlayer(lid, uid, same[0].id);
+    return same[0].id;
+  }
+  if (free.length === 0) return createOwnPlayer(lid, uid, name);
+  return null;
 }
 
 /** Salir de la liga (o que un admin saque a alguien): su jugador queda sin cuenta. */
@@ -578,6 +634,11 @@ export async function removeMember(member: Member) {
 
 export async function setMemberRole(member: Member, role: Exclude<LeagueRole, 'owner'>) {
   await updateDoc(doc(db, 'members', member.id), { role });
+}
+
+/** Anotador del torneo (solo lo cambia el dueño). */
+export async function setMemberScorer(member: Member, scorer: boolean) {
+  await updateDoc(doc(db, 'members', member.id), { scorer });
 }
 
 export async function setSuperadmin(uid: string, value: boolean) {

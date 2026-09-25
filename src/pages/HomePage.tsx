@@ -5,12 +5,13 @@ import { displayName, useAuth } from '../lib/auth';
 import { useLeaguesByIds, useMyMemberships } from '../lib/data';
 import { lastLeague } from '../lib/league';
 import type { LeagueKind } from '../lib/types';
+import { LiveNow } from '../components/LiveNow';
 import { AppShell } from '../components/Shell';
 import { LeagueFormModal } from '../components/LeagueFormModal';
 import { Logo } from '../components/Logo';
 import { Button, Card, Input, Loading } from '../components/ui';
 
-/** Home: crear una liga o un torneo sin liga, unirse con un código y volver a tu última liga. */
+/** Home: lo que está en juego ahora, volver a tu última liga, crear una liga o un torneo y unirse con un código. */
 export default function HomePage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -41,6 +42,8 @@ export default function HomePage() {
             <p className="text-sm text-muted">Ligas y torneos de boliche</p>
           </div>
         </div>
+
+        {auth.user && <LiveNow />}
 
         {resume && (
           <Link

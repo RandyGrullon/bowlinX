@@ -2,23 +2,26 @@ import { useState, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Eye, LogIn, LogOut, Search, UserPlus, UserRound } from 'lucide-react';
 import { displayName, useAuth } from '../lib/auth';
-import { claimPlayer, createOwnPlayer, joinLeague, removeMember, usePlayers } from '../lib/data';
+import { claimPlayer, createOwnPlayer, joinLeague, removeMember, useJoining, usePlayers } from '../lib/data';
 import { rememberLeague, roleLabel, useLeagueCtx } from '../lib/league';
 import { useAction, useFeedback } from '../components/feedback';
 import { Avatar } from '../components/Avatar';
-import { Badge, Button, Card, Empty, Input, ListSkeleton, LoadError } from '../components/ui';
+import { Badge, Button, Card, Empty, Input, ListSkeleton, LoadError, PageSkeleton } from '../components/ui';
 import PlayerPage from './PlayerPage';
 
 /**
- * Perfil dentro de la liga:
+ * "Mis juegos" dentro de la liga:
  * - con jugador vinculado: su página de jugador;
- * - miembro sin jugador: elige quién es en la lista (o crea su jugador);
+ * - miembro sin jugador (al unirse había jugadores sin cuenta): se le pregunta una vez quién es, o crea el suyo;
  * - sin ser miembro: unirse (pública) o pedir invitación (privada).
  */
 export default function LeagueProfilePage() {
-  const { myPlayerId, member } = useLeagueCtx();
+  const { lid, myPlayerId, member } = useLeagueCtx();
   const { user } = useAuth();
+  const joining = useJoining(lid);
   if (myPlayerId) return <PlayerPage playerId={myPlayerId} />;
+  // Recién unido: se está dejando como jugador (no se pregunta quién es mientras tanto).
+  if (member && joining) return <PageSkeleton />;
   if (!user) return <SignInPrompt />;
   if (!member) return <NotMember />;
   return <ClaimPlayer />;
@@ -61,7 +64,7 @@ function NotMember() {
   }
   return (
     <Empty icon={<UserPlus className="size-8" />} title={`Únete a ${league.name}`}>
-      Así eliges tu jugador, confirmas asistencia y subes tus juegos.
+      Entras como jugador: confirmas asistencia, anotas tus juegos y sales en el ranking.
       <div className="mt-4">
         <Button variant="primary" loading={busy} onClick={join} icon={<UserPlus className="size-4" />}>
           Unirme
@@ -71,7 +74,7 @@ function NotMember() {
   );
 }
 
-/** Miembro sin jugador: se vincula con uno de la lista (una sola vez) o crea el suyo. */
+/** Miembro sin jugador: ¿es uno de la lista? Se vincula (una sola vez) o crea el suyo. */
 function ClaimPlayer() {
   const { lid, league, member, isAdmin } = useLeagueCtx();
   const auth = useAuth();
@@ -139,10 +142,12 @@ function ClaimPlayer() {
         <Avatar name={name} className="size-11 text-sm" />
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight">Hola, {name}</h1>
+            <h1 className="text-xl font-bold tracking-tight">¿Eres alguno de estos?</h1>
             {member && member.role !== 'member' && <Badge tone="accent">{roleLabel(member.role)}</Badge>}
           </div>
-          <p className="text-sm text-muted">Elige quién eres en la lista de jugadores de {league.name}.</p>
+          <p className="text-sm text-muted">
+            Ya estás en {league.name}. Si el admin ya te tenía en la lista, elige tu nombre para quedarte con tus juegos.
+          </p>
         </div>
       </div>
 

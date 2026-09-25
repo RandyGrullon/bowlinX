@@ -18,9 +18,12 @@ interface Group {
   lines: Line[];
 }
 
-/** Anotar pinos por juego (a mano, por cuadros o con la foto). Sin foto = borrador si la liga la exige. */
+/**
+ * Anotar pinos por juego (a mano, por cuadros o con la foto). Sin foto = borrador si la liga la exige.
+ * El anotador del torneo solo anota: no agrega ni quita jugadores.
+ */
 export function GamesTab({ event, entries, players }: { event: BowlingEvent; entries: Entry[]; players: Player[] }) {
-  const { lid, league } = useLeagueCtx();
+  const { lid, league, isAdmin } = useLeagueCtx();
   const requirePhoto = league.requirePhoto !== false;
   const run = useAction();
   const { confirm } = useFeedback();
@@ -94,7 +97,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
 
   return (
     <div className="flex flex-col gap-4">
-      {!isTorneo && confirmed.length > 0 && (
+      {!isTorneo && isAdmin && confirmed.length > 0 && (
         <Card className="animate-fade-up flex flex-col gap-3 border-ok/40 bg-ok-soft/40 p-3 sm:flex-row sm:items-center">
           <CalendarCheck className="size-5 shrink-0 text-ok" />
           <div className="min-w-0 flex-1 text-sm">
@@ -115,7 +118,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
         <Button variant="primary" icon={<ScanLine className="size-4" />} onClick={() => setScanFor(null)} disabled={!players.length}>
           {requirePhoto ? 'Verificar con foto' : 'Leer foto'}
         </Button>
-        {!isTorneo && (
+        {!isTorneo && isAdmin && (
           <Button icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)}>
             Agregar asistentes
           </Button>
@@ -129,7 +132,11 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
 
       {entries.length === 0 ? (
         <Empty icon={<Users className="size-8" />} title={isTorneo ? 'Nadie inscrito' : 'Sin asistentes'}>
-          {isTorneo ? 'Inscribe jugadores en la pestaña Inscritos.' : 'Agrega quién vino a practicar, o lee una foto y se agregan solos.'}
+          {!isAdmin
+            ? 'El admin todavía no ha inscrito jugadores.'
+            : isTorneo
+              ? 'Inscribe jugadores en la pestaña Inscritos.'
+              : 'Agrega quién vino a practicar, o lee una foto y se agregan solos.'}
         </Empty>
       ) : (
         groups.map((g) => {
@@ -169,7 +176,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
                       <div className="flex w-full min-w-0 items-center gap-2 sm:w-44 sm:shrink-0">
                         <span className="truncate font-medium">{name}</span>
                         {isTorneo && <span className="text-xs text-muted tabular-nums">hcp {l.hcp}</span>}
-                        {!isTorneo && (
+                        {!isTorneo && isAdmin && (
                           <button type="button" onClick={() => remove(l.entry)} className="ml-auto rounded p-1 text-muted hover:text-danger sm:hidden" aria-label={`Quitar a ${name}`}>
                             <X className="size-4" />
                           </button>
@@ -212,7 +219,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
                           icon={requirePhoto && l.pending > 0 ? <Camera className="size-4 text-warn" /> : <CheckCircle2 className="size-4 text-muted" />}
                         />
                       </div>
-                      {!isTorneo && (
+                      {!isTorneo && isAdmin && (
                         <button type="button" onClick={() => remove(l.entry)} className="hidden rounded p-1 text-muted hover:text-danger sm:block" aria-label={`Quitar a ${name}`}>
                           <X className="size-4" />
                         </button>
@@ -253,7 +260,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
         players={players}
         focusPlayerId={scanFor}
       />
-      {!isTorneo && <AddPlayersModal open={adding} onClose={() => setAdding(false)} event={event} entries={entries} players={players} />}
+      {!isTorneo && isAdmin && <AddPlayersModal open={adding} onClose={() => setAdding(false)} event={event} entries={entries} players={players} />}
       <PhotoModal
         photoId={photo?.photoId ?? null}
         onClose={() => setPhoto(null)}

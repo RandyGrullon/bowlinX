@@ -2,9 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useNavigate } from 'react-router';
 import { Bell, CalendarDays, CheckCircle2, Globe, Inbox, Lock, Megaphone, Trophy, XCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { useLeagueFeeds, useLeaguesByIds, useMyMemberships } from '../lib/data';
+import { useLeagueFeeds, useLeaguesByIds, useMyMemberships, type LeagueFeed } from '../lib/data';
 import { parseDate, toIsoDate } from '../lib/format';
 import { buildNotices, relativeTime, type Notice, type NoticeKind } from '../lib/notifications';
+import type { League } from '../lib/types';
 import { Button, Empty, Modal, cx } from './ui';
 
 interface NoticesState {
@@ -14,9 +15,12 @@ interface NoticesState {
   /** Momento de la última vez que se abrieron (para marcar los nuevos). */
   seenAt: number;
   markAllRead: () => void;
+  /** Lo que pasa en cada liga de la cuenta (también lo usa "En juego ahora"). */
+  feeds: LeagueFeed[];
+  leagues: League[];
 }
 
-const Ctx = createContext<NoticesState>({ items: [], unread: 0, seenAt: 0, markAllRead: () => undefined });
+const Ctx = createContext<NoticesState>({ items: [], unread: 0, seenAt: 0, markAllRead: () => undefined, feeds: [], leagues: [] });
 
 const seenKey = (uid: string) => `bowlingx:avisos-vistos:${uid}`;
 
@@ -59,7 +63,17 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
-  const value = useMemo(() => ({ items: user ? items : [], unread: user ? unread : 0, seenAt, markAllRead }), [user, items, unread, seenAt, markAllRead]);
+  const value = useMemo(
+    () => ({
+      items: user ? items : [],
+      unread: user ? unread : 0,
+      seenAt,
+      markAllRead,
+      feeds: user ? feeds.data : [],
+      leagues: user ? leagues.data : [],
+    }),
+    [user, items, unread, seenAt, markAllRead, feeds.data, leagues.data],
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

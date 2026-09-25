@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Grid3x3, Plus, Send, Sparkles } from 'lucide-react';
 import { submitGames } from '../lib/data';
+import { clearSent, draftCount, latestDraft, loadDraft, restoreDraft, saveDraft } from '../lib/draft';
 import { eventTitle, parseDate, toIsoDate } from '../lib/format';
 import type { CompressedImage } from '../lib/image';
 import { useLeagueCtx } from '../lib/league';
@@ -13,32 +14,14 @@ import { PhotoPicker } from './PhotoPicker';
 import { PhotoView } from './PhotoModal';
 import { Button, Field, Input, Modal, Select, Spinner, cx } from './ui';
 
-const draftKey = (lid: string, playerId: string) => `bowlinx:borrador:${lid}:${playerId}`;
 /** Opción para subir juegos de un día sin evento creado. */
 const BY_DATE = '__fecha__';
+/** Cuánto se espera la respuesta del servidor antes de dar el envío por guardado (sin señal). */
+const OFFLINE_WAIT_MS = 6000;
 
-interface Draft {
-  eventId: string;
-  date?: string;
-  values: string[];
-  frames?: Record<string, GameFrames>;
-}
-
-function loadDraft(key: string): Draft | null {
-  try {
-    return JSON.parse(localStorage.getItem(key) ?? 'null');
-  } catch {
-    return null;
-  }
-}
-
-function saveDraft(key: string, d: Draft | null) {
-  try {
-    if (d) localStorage.setItem(key, JSON.stringify(d));
-    else localStorage.removeItem(key);
-  } catch {
-    // almacenamiento no disponible (modo privado): la vista previa solo vive en pantalla
-  }
+/** Juegos del borrador con al menos los del evento (J1…Jn). */
+function padded(values: string[] | undefined, games = 3): string[] {
+  return Array.from({ length: Math.max(games, values?.length ?? 0) }, (_, i) => values?.[i] ?? '');
 }
 
 /** Jugador: anota sus juegos (vista previa local, por total o por cuadros), adjunta la foto y lo envía al admin. */
@@ -60,8 +43,8 @@ export function SubmitGamesModal({
 }) {
   const { lid, league } = useLeagueCtx();
   const requirePhoto = league.requirePhoto !== false;
-  const { toast } = useFeedback();
-  const key = draftKey(lid, player.id);
+  const { toast, confirm } = useFeedback();
+
   const recent = useMemo(() => {
     const cutoff = Date.now() - 120 * 86400_000;
     return events.filter((e) => parseDate(e.date).getTime() >= cutoff || myEntries.some((m) => m.eventId === e.id) || e.id === preferEventId);
@@ -79,6 +62,8 @@ export function SubmitGamesModal({
   const [rowIdx, setRowIdx] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [framesFor, setFramesFor] = useState<number | null>(null);
+  // El borrador se guarda solo después de cargarlo al abrir (si no, se guardaría lo de la vez anterior).
+  const [loaded, setLoaded] = useState(false);
 
   const byDate = eventId === BY_DATE;
   const event = recent.find((e) => e.id === eventId);
@@ -86,38 +71,49 @@ export function SubmitGamesModal({
   const sameDay = byDate ? events.find((e) => e.date === date) : undefined;
 
   useEffect(() => {
-    if (!open) return;
-    const d = loadDraft(key);
-    const preferred = preferEventId ? recent.find((e) => e.id === preferEventId) : undefined;
-    if (!preferred && d?.eventId === BY_DATE) {
-      setEventId(BY_DATE);
-      setDate(d.date ?? today);
-      setValues(d.values);
-      setFrames(d.frames ?? {});
-    } else {
-      // Por defecto, el evento pedido o el más reciente que ya se jugó (no uno futuro); si no hay, por fecha.
-      const ev = preferred ?? recent.find((e) => e.id === d?.eventId) ?? recent.find((e) => e.date <= today);
-      const keep = d && ev && d.eventId === ev.id;
-      setEventId(ev?.id ?? BY_DATE);
-      setDate(today);
-      setValues(keep ? d.values : Array(ev?.games ?? 3).fill(''));
-      setFrames(keep ? (d.frames ?? {}) : {});
+    if (!open) {
+      setLoaded(false);
+      return;
     }
+    // El evento pedido; si no, donde se quedó el último borrador; si no, el más reciente que ya se jugó (o por fecha).
+    const preferred = preferEventId ? recent.find((e) => e.id === preferEventId) : undefined;
+    const last = preferred ? null : latestDraft(lid, player.id);
+    const ev =
+      preferred ??
+      (last?.eventId === BY_DATE ? undefined : (recent.find((e) => e.id === last?.eventId) ?? recent.find((e) => e.date <= today)));
+    const id = ev?.id ?? BY_DATE;
+    const d = loadDraft(lid, player.id, id);
+    setEventId(id);
+    setDate(id === BY_DATE ? (d?.date ?? today) : today);
+    setValues(padded(d?.values, ev?.games));
+    setFrames(d?.frames ?? {});
     setPhoto(null);
     setRows([]);
     setRowIdx(null);
     setScanError(null);
+    setLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Cada evento tiene su propio borrador en el teléfono.
   useEffect(() => {
-    if (open && eventId) saveDraft(key, { eventId, date, values, frames });
-  }, [open, eventId, date, values, frames, key]);
+    if (!open || !loaded || !eventId) return;
+    saveDraft(lid, player.id, eventId, { date: eventId === BY_DATE ? date : undefined, values, frames });
+  }, [open, loaded, eventId, date, values, frames, lid, player.id]);
 
   function changeEvent(id: string) {
     const ev = recent.find((e) => e.id === id);
+    const there = loadDraft(lid, player.id, id);
+    if (draftCount(there) > 0) {
+      // Ese evento ya tiene juegos en el teléfono: se muestran esos (los de aquí se quedan en su evento).
+      setValues(padded(there!.values, ev?.games));
+      setFrames(there!.frames ?? {});
+    } else {
+      // Lo anotado se pasa al evento elegido (se había elegido mal el evento).
+      saveDraft(lid, player.id, eventId, null);
+      setValues((v) => Array.from({ length: ev?.games ?? Math.max(3, v.length) }, (_, i) => v[i] ?? ''));
+    }
     setEventId(id);
-    setValues((v) => Array.from({ length: ev?.games ?? Math.max(3, v.length) }, (_, i) => v[i] ?? ''));
   }
 
   function setValue(i: number, v: string) {
@@ -167,11 +163,22 @@ export function SubmitGamesModal({
   }
 
   async function send() {
-    if ((!event && !byDate) || (requirePhoto && !photo)) return;
+    if (!event && !byDate) return;
+    if (!photo && requirePhoto) {
+      const ok = await confirm({
+        title: '¿Enviar sin foto?',
+        message:
+          'Vas a enviar tu puntuación sin comprobación de imagen. El admin puede no aceptarla. ¿Deseas enviarla?',
+        confirmText: 'Enviar sin foto',
+      });
+      if (!ok) return;
+    }
     setSending(true);
+    const draftId = eventId;
+    const sent = { values: [...values], frames, date: byDate ? date : undefined };
     try {
       const kept = Object.fromEntries(Object.entries(frames).filter(([i]) => typed[+i] != null));
-      await submitGames(lid, {
+      const sending = submitGames(lid, {
         playerId: player.id,
         eventId: byDate ? null : event!.id,
         date: byDate ? date : null,
@@ -180,8 +187,22 @@ export function SubmitGamesModal({
         frames: Object.keys(kept).length ? kept : null,
         photo,
       });
-      saveDraft(key, null);
-      toast('Enviado. Un admin lo revisará.');
+      // Sin señal (común en la bolera) el envío queda guardado y sale solo al volver la conexión.
+      const result = await Promise.race([
+        sending.then(() => 'ok' as const),
+        new Promise<'sin-senal'>((r) => setTimeout(() => r('sin-senal'), OFFLINE_WAIT_MS)),
+      ]);
+      clearSent(lid, player.id, draftId, sent.values);
+      if (result === 'ok') {
+        toast('Enviado. Un admin lo revisará.');
+      } else {
+        toast('Sin señal: tus juegos se envían solos cuando vuelva la conexión.');
+        sending.catch((e) => {
+          console.error(e);
+          restoreDraft(lid, player.id, draftId, sent);
+          toast('No se pudieron enviar tus juegos. Siguen en tu teléfono: vuelve a enviarlos.', 'error');
+        });
+      }
       onClose();
     } catch (e) {
       console.error(e);
@@ -192,7 +213,7 @@ export function SubmitGamesModal({
   }
 
   const dateOk = !byDate || (/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today);
-  const canSend = (!!event || byDate) && dateOk && (!!photo || !requirePhoto) && hasTyped && !invalid && !scanning;
+  const canSend = (!!event || byDate) && dateOk && hasTyped && !invalid && !scanning;
 
   return (
     <>
@@ -274,7 +295,9 @@ export function SubmitGamesModal({
             </div>
             <span className="text-xs text-muted">
               Vista previa guardada en este teléfono.{' '}
-              {requirePhoto ? 'Para que cuente, adjunta la foto y envíala.' : 'La foto es opcional en esta liga; un admin lo aprueba.'}
+              {requirePhoto
+                ? 'Adjunta la foto del marcador para que el admin lo compruebe. Sin foto se puede enviar, pero quizá no lo acepte.'
+                : 'La foto es opcional en esta liga; un admin lo aprueba.'}
             </span>
           </div>
 

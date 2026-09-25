@@ -49,6 +49,8 @@ export interface Member {
   role: LeagueRole;
   /** Jugador de la liga vinculado a esta cuenta. */
   playerId: string | null;
+  /** Anotador (solo en torneos sin liga): anota los juegos de todos. Se suma a su rol y a ser jugador. */
+  scorer?: boolean;
 }
 
 /** Código de invitación a una liga privada (el id del documento es el código). */
@@ -150,7 +152,7 @@ export interface Submission {
   scanned: (number | null)[] | null;
   /** Cuadros de los juegos anotados tiro por tiro (clave = índice del juego). */
   frames?: Record<string, GameFrames> | null;
-  /** Foto del marcador; null solo si la liga no exige foto. */
+  /** Foto del marcador; null si se envió sin foto (el admin decide si la acepta). */
   photoId: string | null;
   status: SubmissionStatus;
   note: string | null;

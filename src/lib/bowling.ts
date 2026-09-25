@@ -134,6 +134,78 @@ export function validRolls(rolls: readonly number[]): boolean {
   return true;
 }
 
+/**
+ * Segundo tiro del mismo "rack" cuando cambia el primero (ninguno es strike): un spare sigue siendo spare
+ * (el segundo se ajusta) y un cuadro abierto sigue abierto; si el segundo ya no cabe, null.
+ */
+function keepSecond(oldFirst: number, second: number, newFirst: number): number | null {
+  if (oldFirst + second === 10) return 10 - newFirst;
+  return second < 10 - newFirst ? second : null;
+}
+
+/**
+ * Corrige el tiro `i` con `pins` sin perder los cuadros siguientes (cada cuadro de la 1 a la 9 empieza
+ * con los 10 pinos, así que no dependen del anterior). El spare sigue spare y el cuadro abierto sigue abierto.
+ * `extra` va alineado con los tiros (p. ej. los pines marcados) y lo que cambia queda con `fill`.
+ * Si el cuadro necesita otro tiro (una X que pasó a ser 7, o el segundo ya no cabe), ese tiro queda en 0
+ * y se devuelve en `next` para escribirlo enseguida. En el cuadro 10, lo que ya no tiene sentido se quita
+ * y se vuelve a anotar al final.
+ */
+export function replaceRoll<M>(
+  rolls: readonly number[],
+  extra: readonly M[],
+  i: number,
+  pins: number,
+  fill: M,
+): { rolls: number[]; extra: M[]; next: number | null } {
+  const frames = scoreGame(rolls).frames;
+  const f = frames.findIndex((fr) => i >= fr.start && i < fr.start + fr.rolls.length);
+  if (f < 0) return { rolls: [...rolls], extra: [...extra], next: null };
+  const fr = frames[f];
+  const end = fr.start + fr.rolls.length;
+  const k = i - fr.start;
+  const [a, b, c] = fr.rolls;
+  const xs = Array.from({ length: rolls.length }, (_, j) => (j < extra.length ? extra[j] : fill));
+  // Los tiros del cuadro que no cambiaron conservan su dato; el resto queda con `fill`.
+  const build = (frame: number[], next: number | null = null) => ({
+    rolls: [...rolls.slice(0, fr.start), ...frame, ...rolls.slice(end)],
+    extra: [...xs.slice(0, fr.start), ...frame.map((v, j) => (j !== k && v === fr.rolls[j] ? xs[fr.start + j] : fill)), ...xs.slice(end)],
+    next,
+  });
+
+  if (f < 9) {
+    if (k === 1) return build([a, pins]);
+    if (pins === 10) return build([10]); // pasó a strike: el segundo tiro sobra
+    if (b == null) {
+      // Era strike (o el cuadro va por el primer tiro): si hay cuadros después, falta el segundo tiro.
+      return end < rolls.length ? build([pins, 0], i + 1) : build([pins]);
+    }
+    const second = keepSecond(a, b, pins);
+    return second == null ? build([pins, 0], i + 1) : build([pins, second]);
+  }
+
+  // Cuadro 10 (siempre es el último): se conserva lo que sigue si sigue teniendo sentido; si no, se quita.
+  if (k === 0) {
+    if (a === 10 && pins === 10) return build([...fr.rolls]);
+    if (a === 10 || pins === 10 || b == null) return build([pins]);
+    const second = keepSecond(a, b, pins);
+    if (second == null) return build([pins]);
+    return build(c != null ? [pins, second, c] : [pins, second]);
+  }
+  if (k === 1) {
+    if (a === 10) {
+      // Tras la X, el segundo tiro es con los 10 pinos; el tercero depende de él.
+      if ((b === 10) !== (pins === 10)) return build([a, pins]);
+      if (pins === 10 || c == null) return build(c != null ? [a, pins, c] : [a, pins]);
+      const third = keepSecond(b, c, pins);
+      return build(third == null ? [a, pins] : [a, pins, third]);
+    }
+    // Segundo tiro del primer rack: el tercero solo existe con spare.
+    return build(a + pins === 10 && a + b === 10 && c != null ? [a, pins, c] : [a, pins]);
+  }
+  return build([a, b, pins]);
+}
+
 export interface FrameStats {
   strikes: number;
   spares: number;

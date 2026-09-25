@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Grid3x3, ImageOff, Inbox, X } from 'lucide-react';
+import { AlertTriangle, Check, Grid3x3, ImageOff, Inbox, X } from 'lucide-react';
 import { approveSubmission, fetchEffectiveAverages, practiceForDate, rejectSubmission, useAllEntries, useEvents, usePhoto, usePlayers, useSubmissions } from '../lib/data';
 import { eventTitle, formatDate } from '../lib/format';
 import { useLeagueCtx } from '../lib/league';
@@ -72,10 +72,12 @@ function SubmissionCard({
   player?: Player;
   entry: Entry | null;
 }) {
-  const { lid } = useLeagueCtx();
+  const { lid, league } = useLeagueCtx();
   const run = useAction();
   const { toast } = useFeedback();
   const photo = usePhoto(lid, sub.photoId);
+  // La liga exige foto pero el jugador lo envió sin ella: el admin decide si lo acepta.
+  const unverified = !sub.photoId && league.requirePhoto !== false;
   const [showFrames, setShowFrames] = useState(false);
   const [values, setValues] = useState<string[]>([]);
   const [start, setStart] = useState(0);
@@ -93,9 +95,11 @@ function SubmissionCard({
 
   useEffect(() => {
     setValues(rows.map((r) => String(r.scanned ?? r.typed ?? '')));
-    setStart(firstFreeSlot(entry, games, rows.length));
+    // Envío de un evento: cada juego va en su lugar (J2 es el J2; un juego vacío es que no lo mandó).
+    // Por fecha (práctica sin crear o ya creada), se buscan los primeros juegos libres.
+    setStart(sub.eventId ? 0 : firstFreeSlot(entry, games, rows.length));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sub.id, event?.id]);
+  }, [sub.id, event?.id, entry == null]);
 
   if ((!event && !sub.date) || !player) {
     return (
@@ -139,7 +143,14 @@ function SubmissionCard({
       <div className="flex items-center gap-3 border-b border-line px-4 py-3">
         <Avatar name={player.name} />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold">{player.name}</div>
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold">{player.name}</span>
+            {unverified && (
+              <Badge tone="warn">
+                <AlertTriangle className="size-3" /> Sin foto
+              </Badge>
+            )}
+          </div>
           <div className="truncate text-xs text-muted">
             {event ? eventTitle(event) : `Práctica ${formatDate(sub.date!)} · se crea al aprobar`}
           </div>
@@ -147,7 +158,13 @@ function SubmissionCard({
         {sub.createdAt && <span className="hidden text-xs text-muted sm:block">{new Date(sub.createdAt.toMillis()).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}</span>}
       </div>
       <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        {!sub.photoId ? (
+        {unverified ? (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-warn/50 bg-warn-soft px-4 py-5 text-center text-sm text-warn">
+            <AlertTriangle className="size-6" />
+            <p className="font-semibold">Enviado sin foto del marcador</p>
+            <p className="text-xs">Esta liga exige foto. Apruébalo solo si confías en los juegos; si no, recházalo y pídele la foto.</p>
+          </div>
+        ) : !sub.photoId ? (
           <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line text-sm text-muted">
             <ImageOff className="size-6" /> Sin foto (la liga no la exige)
           </div>

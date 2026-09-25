@@ -26,6 +26,16 @@ service cloud.firestore {
     function isLeagueAdmin(lid) {
       return isSuper() || (isMember(lid) && role(lid) in ['owner', 'admin']);
     }
+    // Dueño (o superadmin): el único que da o quita permisos (admins y anotadores).
+    function isLeagueOwner(lid) {
+      return isSuper() || (isMember(lid) && role(lid) == 'owner');
+    }
+    // Anotador de un torneo sin liga: anota los juegos de todos, nada más.
+    function isScorer(lid) {
+      return isMember(lid)
+        && get(memberPath(lid)).data.get('scorer', false) == true
+        && league(lid).get('kind', 'liga') == 'torneo';
+    }
     // Jugador de la liga vinculado a la cuenta (null si no tiene).
     function myPlayer(lid) {
       return isMember(lid) ? get(memberPath(lid)).data.playerId : null;
@@ -132,13 +142,15 @@ service cloud.firestore {
       match /entries/{id} {
         allow read: if canRead(lid);
         allow write: if isLeagueAdmin(lid);
+        // Anotador: solo los pinos, las fotos y los cuadros de quienes ya están en el torneo.
+        allow update: if isScorer(lid) && onlyChanged(['scores', 'photos', 'frames']);
       }
 
-      // Fotos de los marcadores (comprimidas). Las sube un admin o un miembro con jugador.
+      // Fotos de los marcadores (comprimidas). Las sube un admin, un anotador o un miembro con jugador.
       match /photos/{id} {
         allow read: if canRead(lid);
         allow create: if isLeagueAdmin(lid) || (
-          myPlayer(lid) != null
+          (myPlayer(lid) != null || isScorer(lid))
           && request.resource.data.keys().hasOnly(['data', 'width', 'height', 'eventId', 'createdAt'])
           && request.resource.data.data is string
           && request.resource.data.data.size() < 750000
@@ -171,10 +183,10 @@ service cloud.firestore {
               || (request.resource.data.eventId == null
                 && request.resource.data.get('date', null) is string
                 && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
-          // Con foto, o sin foto solo si la liga no la exige.
+          // Con foto, o sin foto: la app le avisa que el admin puede no aceptarlo y el admin decide.
           && ((request.resource.data.photoId is string
                 && existsAfter(/databases/$(database)/documents/leagues/$(lid)/photos/$(request.resource.data.photoId)))
-              || (request.resource.data.photoId == null && league(lid).requirePhoto == false))
+              || request.resource.data.photoId == null)
           && request.resource.data.createdAt == request.time
         );
         allow update, delete: if isLeagueAdmin(lid);
@@ -206,20 +218,27 @@ service cloud.firestore {
                     && get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.leagueId == request.resource.data.leagueId)))
         );
       allow update: if
-        // Admins de la liga: roles (nunca el del dueño) y desvincular/vincular jugador.
-        (isLeagueAdmin(resource.data.leagueId)
-          && onlyChanged(['role', 'playerId'])
+        // Dueño (o superadmin): permisos (admin y anotador, nunca el rol del dueño) y vincular jugador.
+        (isLeagueOwner(resource.data.leagueId)
+          && onlyChanged(['role', 'playerId', 'scorer'])
+          && request.resource.data.get('scorer', false) is bool
           && (request.resource.data.role == resource.data.role
               || (resource.data.role != 'owner' && request.resource.data.role in ['admin', 'member'])))
+        // Admins: solo vincular o desvincular el jugador de una cuenta.
+        || (isLeagueAdmin(resource.data.leagueId) && onlyChanged(['playerId']))
+        // Un admin deja de serlo por su cuenta (sigue como jugador).
+        || (signedIn() && resource.data.uid == request.auth.uid && resource.data.role == 'admin'
+            && onlyChanged(['role']) && request.resource.data.role == 'member')
         // El miembro se vincula con su jugador una sola vez (junto con marcar el jugador).
         || (signedIn() && resource.data.uid == request.auth.uid
             && resource.data.playerId == null
             && onlyChanged(['playerId'])
             && request.resource.data.playerId is string
             && getAfter(/databases/$(database)/documents/leagues/$(resource.data.leagueId)/players/$(request.resource.data.playerId)).data.uid == request.auth.uid);
-      // Salir de la liga (el dueño no), o que un admin saque a alguien.
+      // Salir de la liga (el dueño no). El dueño saca a cualquiera; un admin solo a quien no tiene permisos
+      // (ni admin ni anotador: sacarlo sería quitarle el permiso).
       allow delete: if (signedIn() && resource.data.uid == request.auth.uid && resource.data.role != 'owner')
-        || (isLeagueAdmin(resource.data.leagueId) && resource.data.role != 'owner')
+        || (isLeagueAdmin(resource.data.leagueId) && resource.data.role == 'member' && resource.data.get('scorer', false) != true)
         || isSuper()
         || (isMember(resource.data.leagueId) && role(resource.data.leagueId) == 'owner');
     }

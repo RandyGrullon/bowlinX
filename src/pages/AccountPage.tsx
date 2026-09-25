@@ -4,6 +4,7 @@ import { Check, ChevronRight, Crown, LogOut, Pencil, Settings } from 'lucide-rea
 import { createProfile, displayName, logout, renameProfile, useAuth } from '../lib/auth';
 import { useLeaguesByIds, useMyMemberships } from '../lib/data';
 import { rememberLeague, roleLabel } from '../lib/league';
+import { BackLink } from '../components/BackLink';
 import { AppShell } from '../components/Shell';
 import { Avatar } from '../components/Avatar';
 import { useAction } from '../components/feedback';
@@ -49,9 +50,12 @@ export default function AccountPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-5">
-        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-          <Settings className="size-6 text-accent" /> Configuración
-        </h1>
+        <div className="flex items-center gap-2">
+          <BackLink fallback="/" className="-ml-1.5" />
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+            <Settings className="size-6 text-accent" /> Configuración
+          </h1>
+        </div>
         <Card className="flex flex-col gap-4 p-5">
           <div className="flex items-center gap-4">
             <Avatar name={displayName(auth)} className="size-14 text-lg" />

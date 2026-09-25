@@ -59,7 +59,7 @@ export function PhotoModal({
       {imported ? (
         <p className="text-sm text-muted">Resultado cargado del Excel del torneo (auditado). No tiene foto.</p>
       ) : noPhoto ? (
-        <p className="text-sm text-muted">Anotado sin foto: la liga no la exige.</p>
+        <p className="text-sm text-muted">Cuenta sin foto del marcador (la liga no la exige o un admin lo aceptó así).</p>
       ) : photo.loading ? (
         <Loading />
       ) : photo.data ? (

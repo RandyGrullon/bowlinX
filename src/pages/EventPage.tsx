@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
-  ArrowLeft,
   CalendarDays,
   ClipboardList,
   FileSpreadsheet,
@@ -12,14 +11,15 @@ import {
   Shield,
   Trash2,
   Trophy,
-  Upload,
-  UserRound,
   Users,
 } from 'lucide-react';
-import { deleteEvent, useEvent, useEventEntries, useEvents, usePlayers } from '../lib/data';
+import { deleteEvent, useEvent, useEventEntries, useEvents, usePlayerSubmissions, usePlayers } from '../lib/data';
 import { eventLabel, formatDateLong, toIsoDate, typeLabel } from '../lib/format';
 import { useLeagueCtx } from '../lib/league';
+import { liveInfo } from '../lib/live';
+import { useNow } from '../lib/useNow';
 import { Announcements } from '../components/AnnouncementCard';
+import { BackLink } from '../components/BackLink';
 import { EventFormModal } from '../components/EventFormModal';
 import { SubmitGamesModal } from '../components/SubmitGamesModal';
 import { useAction, useFeedback } from '../components/feedback';
@@ -27,6 +27,7 @@ import { Badge, Button, Card, Empty, ListSkeleton, LoadError, PageSkeleton, Tabs
 import { shareLink } from '../components/share';
 import { GameDetailModal } from '../components/event/GameDetailModal';
 import { GamesTab } from '../components/event/GamesTab';
+import { MyGamesPanel } from '../components/event/MyGamesPanel';
 import { RosterTab } from '../components/event/RosterTab';
 import { StandingsTab } from '../components/event/StandingsTab';
 import { TeamsTab } from '../components/event/TeamsTab';
@@ -34,11 +35,14 @@ import type { Entry } from '../lib/types';
 
 type TabKey = 'inscritos' | 'equipos' | 'juegos' | 'clasificacion';
 
-/** Un torneo o una práctica. El admin lo maneja todo; los demás lo ven (clasificación en vivo y sus juegos). */
+/**
+ * Un torneo o una práctica. El admin lo maneja todo; el anotador del torneo anota los juegos;
+ * el jugador ve la clasificación en vivo y anota los suyos para enviarlos a revisión.
+ */
 export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const params0 = useParams();
   const eventId = fixed ?? params0.eventId;
-  const { lid, base, isAdmin, myPlayerId, league } = useLeagueCtx();
+  const { lid, base, isAdmin, canScore, myPlayerId, league } = useLeagueCtx();
   // Torneo sin liga: el evento es la portada, no hay a dónde volver.
   const standalone = league.kind === 'torneo';
   const navigate = useNavigate();
@@ -53,6 +57,8 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const entries = useEventEntries(lid, eventId);
   const players = usePlayers(lid);
   const events = useEvents(myPlayerId ? lid : undefined);
+  const mySubs = usePlayerSubmissions(isAdmin ? undefined : lid, myPlayerId ?? undefined);
+  const now = useNow();
 
   const loadError = event.error ?? entries.error ?? players.error;
   if (loadError) return <LoadError error={loadError} />;
@@ -73,11 +79,18 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const mine = myPlayerId ? entries.data.find((e) => e.playerId === myPlayerId) ?? null : null;
   const nameOf = (e: Entry) => players.data.find((p) => p.id === e.playerId)?.name ?? '(jugador borrado)';
   const me = myPlayerId ? players.data.find((p) => p.id === myPlayerId) : undefined;
-  const upcoming = ev.date >= toIsoDate(new Date());
+  const today = toIsoDate(now);
+  const upcoming = ev.date >= today;
 
-  const tabs: { key: TabKey; label: string; icon: ReactNode }[] = !isAdmin
+  // Anotador (no admin): solo anota juegos y ve la clasificación.
+  const tabs: { key: TabKey; label: string; icon: ReactNode }[] = !canScore
     ? []
-    : isTorneo
+    : !isAdmin
+      ? [
+          { key: 'juegos', label: 'Juegos', icon: <ClipboardList className="size-4" /> },
+          { key: 'clasificacion', label: 'Clasificación', icon: <ListOrdered className="size-4" /> },
+        ]
+      : isTorneo
       ? [
           { key: 'inscritos', label: 'Inscritos', icon: <Users className="size-4" /> },
           { key: 'equipos', label: 'Equipos', icon: <Shield className="size-4" /> },
@@ -89,7 +102,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
           { key: 'clasificacion', label: 'Resultados', icon: <ListOrdered className="size-4" /> },
         ];
   const requested = params.get('tab') as TabKey | null;
-  const tab: TabKey = isAdmin ? (tabs.some((t) => t.key === requested) ? requested! : tabs[0].key) : 'clasificacion';
+  const tab: TabKey = tabs.length ? (tabs.some((t) => t.key === requested) ? requested! : tabs[0].key) : 'clasificacion';
 
   async function remove() {
     const ok = await confirm({
@@ -109,11 +122,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start gap-3">
-        {!standalone && (
-          <Link to={back} className="mt-1 rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-fg" aria-label="Volver">
-            <ArrowLeft className="size-5" />
-          </Link>
-        )}
+        {!standalone && <BackLink fallback={back} className="mt-1" />}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="truncate text-xl font-bold tracking-tight">{eventLabel(ev)}</h1>
@@ -176,17 +185,31 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
         )
       ))}
 
-      {/* Observador con jugador: su juego primero. */}
-      {!isAdmin && myPlayerId && (
-        <MyGameCard
-          hasEntry={!!mine}
-          onOpen={() => mine && setDetail(mine)}
-          onUpload={() => setSubmitting(true)}
-          summary={mine && mine.scores?.some((s) => s != null) ? mine.scores.map((s) => s ?? '–').join(' · ') : null}
+      {/* Jugador: sus juegos primero (los anota mientras juega y los envía a revisión). */}
+      {!isAdmin && myPlayerId && !entries.loading && !mySubs.loading && (
+        <MyGamesPanel
+          event={ev}
+          playerId={myPlayerId}
+          entry={mine}
+          subs={mySubs.data.filter((s) => s.eventId === ev.id)}
+          live={liveInfo(ev, league, now)}
+          today={today}
+          autoStart={params.get('anotar') === '1'}
+          onAutoStarted={() =>
+            setParams(
+              (p) => {
+                p.delete('anotar');
+                return p;
+              },
+              { replace: true },
+            )
+          }
+          onOpenEntry={() => mine && setDetail(mine)}
+          onSend={() => setSubmitting(true)}
         />
       )}
 
-      {isAdmin && <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />}
+      {tabs.length > 0 && <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />}
 
       {entries.loading || players.loading ? (
         <ListSkeleton rows={6} />
@@ -234,34 +257,5 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
         />
       )}
     </div>
-  );
-}
-
-function MyGameCard({
-  hasEntry,
-  summary,
-  onOpen,
-  onUpload,
-}: {
-  hasEntry: boolean;
-  summary: string | null;
-  onOpen: () => void;
-  onUpload: () => void;
-}) {
-  return (
-    <Card className="flex items-center gap-3 p-3">
-      <button type="button" onClick={onOpen} disabled={!hasEntry} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
-          <UserRound className="size-5" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">Mi juego</p>
-          <p className="truncate text-xs text-muted tabular-nums">{summary ?? (hasEntry ? 'Estás inscrito · sin juegos todavía' : 'Todavía no tienes juegos aquí')}</p>
-        </div>
-      </button>
-      <Button size="sm" icon={<Upload className="size-4" />} onClick={onUpload}>
-        Subir
-      </Button>
-    </Card>
   );
 }

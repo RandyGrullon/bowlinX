@@ -9,6 +9,7 @@ import { eventPosition } from '../lib/stats';
 import type { BowlingEvent, EventType } from '../lib/types';
 import { Announcements } from '../components/AnnouncementCard';
 import { EventFormModal } from '../components/EventFormModal';
+import { LiveNow } from '../components/LiveNow';
 import { NextPracticeCard } from '../components/NextPracticeCard';
 import { useAction } from '../components/feedback';
 import { Badge, Button, Card, Empty, ListSkeleton, LoadError, PageSkeleton, Position, Tabs } from '../components/ui';
@@ -68,6 +69,7 @@ function LeagueEvents() {
     <div className="flex flex-col gap-5">
       <LeagueHeader />
       {!member && league.visibility === 'public' && <JoinBanner />}
+      {member && <LiveNow lid={lid} />}
 
       {!events.loading && <Announcements events={events.data} />}
       {myPlayerId && <NextPracticeCard events={events.data} playerId={myPlayerId} />}
