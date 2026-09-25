@@ -13,7 +13,8 @@ export interface ScoreValue {
   frames: GameFrames | null;
 }
 
-type Mode = 'pines' | 'teclado' | 'total';
+export type ScoreMode = 'pines' | 'teclado' | 'total';
+type Mode = ScoreMode;
 const MODE_KEY = 'bowlinx:modo-anotar';
 
 function savedMode(): Mode | null {
@@ -22,6 +23,16 @@ function savedMode(): Mode | null {
     return m === 'pines' || m === 'teclado' || m === 'total' ? m : null;
   } catch {
     return null;
+  }
+}
+
+/** La forma de anotar que eligió el jugador (la próxima vez se abre así). */
+export const preferredMode = (): ScoreMode => savedMode() ?? 'teclado';
+export function setPreferredMode(m: ScoreMode) {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // sin almacenamiento
   }
 }
 
@@ -98,11 +109,7 @@ export function FrameEditor({ initial, onChange }: { initial: ScoreValue; onChan
   }
 
   function pickMode(m: Mode) {
-    try {
-      localStorage.setItem(MODE_KEY, m);
-    } catch {
-      // sin almacenamiento
-    }
+    setPreferredMode(m);
     if (m === 'total' && game.complete && total.trim() === '') setTotal(String(game.score));
     setKnocked(0);
     endEdit();

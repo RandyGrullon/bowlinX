@@ -45,6 +45,8 @@ import type { Member } from '../lib/types';
 import { Avatar } from '../components/Avatar';
 import { InviteCard } from '../components/InviteCard';
 import { SuggestionsPanel } from '../components/SuggestionsPanel';
+import { Tour } from '../components/Tour';
+import { ADMIN_TOUR } from '../lib/tours';
 import { LeagueForm, leagueInput } from '../components/LeagueFormModal';
 import { useAction, useFeedback } from '../components/feedback';
 import { Badge, Button, Card, ListSkeleton, LoadError, Modal, Tabs, TopLoader, cx } from '../components/ui';
@@ -76,7 +78,10 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />
+      <Tour name="admin" steps={ADMIN_TOUR} when={isAdmin} />
+      <div data-tour="admin-secciones">
+        <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />
+      </div>
       <Suspense fallback={<TopLoader />}>
         <div key={tab} className="animate-fade-up">
           {tab === 'jugadores' ? (

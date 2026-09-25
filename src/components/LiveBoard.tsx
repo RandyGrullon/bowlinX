@@ -49,7 +49,7 @@ export function LiveBoard({
   const unconfirmed = rows.some((r) => r.games.some((g) => g.source && g.source !== 'tabla'));
 
   return (
-    <Card className="animate-fade-up overflow-hidden border-ok/40">
+    <Card className="animate-fade-up overflow-hidden border-ok/40" tour="tablero">
       <div className="flex items-center gap-2 bg-ok-soft/60 px-4 py-2 text-xs font-semibold text-ok">
         <span className="live-dot" />
         {info.startsSoon ? `Empieza a las ${info.startLabel}` : 'En juego ahora'}
@@ -107,7 +107,9 @@ export function LiveBoard({
                 </span>
                 <span className="shrink-0 text-right">
                   <span className="block text-base leading-tight font-bold tabular-nums">{r.total}</span>
-                  <span className="block text-[10px] text-muted">{r.played === 1 ? '1 juego' : `${r.played} juegos`}</span>
+                  <span className="block text-[10px] text-muted tabular-nums">
+                    {r.played === 1 ? '1 juego' : `${r.played} juegos`} · prom {Math.floor(r.total / r.played)}
+                  </span>
                 </span>
               </Row>
             );

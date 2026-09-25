@@ -79,6 +79,21 @@ service cloud.firestore {
       allow update: if (isSuper() && onlyChanged(['superadmin']) && request.resource.data.superadmin is bool)
         || (signedIn() && request.auth.uid == uid && onlyChanged(['name']) && validName(request.resource.data.name));
       allow delete: if isSuper();
+
+      // Teléfonos de la cuenta suscritos a las notificaciones (push). Solo la cuenta los ve y los cambia;
+      // el envío programado los lee con su credencial de servidor.
+      match /push/{id} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['endpoint', 'p256dh', 'auth', 'ua', 'updatedAt'])
+          && request.resource.data.endpoint is string
+          && request.resource.data.endpoint.matches('^https://(fcm[.]googleapis[.]com|web[.]push[.]apple[.]com|updates[.]push[.]services[.]mozilla[.]com|[a-z0-9-]+[.]notify[.]windows[.]com)/.*')
+          && request.resource.data.endpoint.size() < 1000
+          && request.resource.data.p256dh is string && request.resource.data.p256dh.size() < 200
+          && request.resource.data.auth is string && request.resource.data.auth.size() < 100
+          && request.resource.data.ua is string && request.resource.data.ua.size() <= 200
+          && request.resource.data.updatedAt == request.time;
+      }
     }
 
     // ---------- Ligas ----------
@@ -136,6 +151,13 @@ service cloud.firestore {
           && onlyChanged(['rsvp'])
           && request.resource.data.get('rsvp', {}).diff(resource.data.get('rsvp', {})).affectedKeys().hasOnly([myPlayer(lid)])
           && request.resource.data.get('rsvp', {}).get(myPlayer(lid), true) == true
+        ) || (
+          // En una práctica cualquier jugador suma un juego más (de uno en uno, hasta 10).
+          myPlayer(lid) != null
+          && resource.data.type == 'practica'
+          && onlyChanged(['games'])
+          && request.resource.data.games == resource.data.games + 1
+          && request.resource.data.games <= 10
         );
       }
 

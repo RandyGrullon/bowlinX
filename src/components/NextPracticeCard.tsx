@@ -28,7 +28,7 @@ export function NextPracticeCard({ events, playerId }: { events: BowlingEvent[];
   }
 
   return (
-    <Card className={cx('animate-fade-up flex flex-col gap-3 p-4 transition sm:flex-row sm:items-center', going && 'border-ok/40 bg-ok-soft/40')}>
+    <Card tour="proxima-practica" className={cx('animate-fade-up flex flex-col gap-3 p-4 transition sm:flex-row sm:items-center', going && 'border-ok/40 bg-ok-soft/40')}>
       <div className="flex flex-1 items-center gap-3">
         <div className={cx('flex size-11 shrink-0 items-center justify-center rounded-2xl', going ? 'bg-ok-soft text-ok' : 'bg-accent-soft text-accent')}>
           {going ? <CalendarCheck className="size-5" /> : <CalendarDays className="size-5" />}

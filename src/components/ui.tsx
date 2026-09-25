@@ -82,9 +82,9 @@ export function Field({ label, hint, children, className }: { label: string; hin
   );
 }
 
-export function Card({ className, style, children }: { className?: string; style?: CSSProperties; children: ReactNode }) {
+export function Card({ className, style, tour, children }: { className?: string; style?: CSSProperties; tour?: string; children: ReactNode }) {
   return (
-    <div className={cx('card-shadow rounded-2xl border border-line bg-surface', className)} style={style}>
+    <div className={cx('card-shadow rounded-2xl border border-line bg-surface', className)} style={style} data-tour={tour}>
       {children}
     </div>
   );

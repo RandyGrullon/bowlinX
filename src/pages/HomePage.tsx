@@ -1,23 +1,24 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { ArrowRight, CalendarDays, Crown, Globe, Lock, LogIn, Plus, Ticket, Trophy, UserPlus } from 'lucide-react';
+import { ArrowRight, CalendarDays, Crown, Globe, Lock, LogIn, Ticket, Trophy, UserPlus } from 'lucide-react';
 import { displayName, useAuth } from '../lib/auth';
 import { useLeaguesByIds, useMyMemberships } from '../lib/data';
 import { lastLeague } from '../lib/league';
-import type { LeagueKind } from '../lib/types';
 import { LiveNow } from '../components/LiveNow';
+import { NotificationsPrompt } from '../components/NotificationsOptIn';
+import { WeekCalendar } from '../components/WeekCalendar';
+import { Tour } from '../components/Tour';
+import { HOME_TOUR } from '../lib/tours';
 import { AppShell } from '../components/Shell';
-import { LeagueFormModal } from '../components/LeagueFormModal';
 import { Logo } from '../components/Logo';
 import { Button, Card, Input, Loading } from '../components/ui';
 
-/** Home: lo que está en juego ahora, volver a tu última liga, crear una liga o un torneo y unirse con un código. */
+/** Home: lo que está en juego ahora, lo que viene esta semana, volver a tu última liga y unirse con un código (crear está en el botón del centro de abajo). */
 export default function HomePage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const memberships = useMyMemberships(auth.user?.uid);
   const leagues = useLeaguesByIds(memberships.data.map((m) => m.leagueId));
-  const [creating, setCreating] = useState<LeagueKind | null>(null);
   const [code, setCode] = useState('');
 
   if (auth.loading) return <Loading />;
@@ -43,7 +44,11 @@ export default function HomePage() {
           </div>
         </div>
 
+        <Tour name="inicio" steps={HOME_TOUR} when={!!auth.user} />
         {auth.user && <LiveNow />}
+        <NotificationsPrompt />
+        {/* Lo que viene en todas tus ligas, semana por semana. */}
+        {auth.user && <WeekCalendar />}
 
         {resume && (
           <Link
@@ -63,26 +68,7 @@ export default function HomePage() {
 
         {auth.user ? (
           <>
-            <section className="flex flex-col gap-2">
-              <h2 className="text-sm font-semibold text-muted">Crear</h2>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <CreateCard
-                  icon={<Plus className="size-5" />}
-                  title="Crear una liga"
-                  text="Con torneos, prácticas y ranking. Pública o privada; invitas con link o QR."
-                  onClick={() => setCreating('liga')}
-                  primary
-                />
-                <CreateCard
-                  icon={<Trophy className="size-5" />}
-                  title="Torneo sin liga"
-                  text="Un torneo suelto con sus propios jugadores, equipos y clasificación."
-                  onClick={() => setCreating('torneo')}
-                />
-              </div>
-            </section>
-
-            <Card className="p-4">
+            <Card className="p-4" tour="unirse">
               <form onSubmit={submitCode} className="flex flex-col gap-2">
                 <span className="flex items-center gap-2 text-sm font-medium">
                   <Ticket className="size-5 text-accent" /> ¿Te invitaron? Pon el código
@@ -147,29 +133,6 @@ export default function HomePage() {
         )}
       </div>
 
-      <LeagueFormModal open={creating != null} onClose={() => setCreating(null)} kind={creating ?? 'liga'} onSaved={(to) => navigate(to)} />
     </AppShell>
-  );
-}
-
-function CreateCard({ icon, title, text, onClick, primary }: { icon: ReactNode; title: string; text: string; onClick: () => void; primary?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        primary
-          ? 'flex items-start gap-3 rounded-2xl bg-accent p-4 text-left text-accent-fg shadow-sm transition active:scale-[0.98]'
-          : 'flex items-start gap-3 rounded-2xl border border-line bg-surface p-4 text-left transition hover:bg-surface-2 active:scale-[0.98]'
-      }
-    >
-      <span className={primary ? 'flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15' : 'flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent'}>
-        {icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block font-semibold">{title}</span>
-        <span className={primary ? 'block text-sm opacity-85' : 'block text-sm text-muted'}>{text}</span>
-      </span>
-    </button>
   );
 }

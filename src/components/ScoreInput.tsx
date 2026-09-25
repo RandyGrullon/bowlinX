@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Camera, CheckCircle2 } from 'lucide-react';
 import { isValidScore } from '../lib/stats';
 import { cx } from './ui';
@@ -30,6 +30,8 @@ export function ScoreInput({
 }) {
   const [draft, setDraft] = useState(value == null ? '' : String(value));
   const [focused, setFocused] = useState(false);
+  // Escape: se sale sin guardar (el blur que sigue no guarda lo escrito).
+  const cancelled = useRef(false);
 
   useEffect(() => {
     if (!focused) setDraft(value == null ? '' : String(value));
@@ -53,12 +55,14 @@ export function ScoreInput({
   const n = draft.trim() === '' ? null : Number(draft);
   const invalid = n != null && !isValidScore(n);
 
-  function commit() {
-    if (invalid) {
+  /** Guarda lo que tiene la casilla en este momento (no lo del último render: un teclado o autocompletar rápido no se pierde). */
+  function commit(raw: string) {
+    const typed = raw.trim() === '' ? null : Number(raw);
+    if (typed != null && !isValidScore(typed)) {
       setDraft(value == null ? '' : String(value));
       return;
     }
-    if (n !== value) onCommit(n);
+    if (typed !== value) onCommit(typed);
   }
 
   function onKey(e: KeyboardEvent<HTMLInputElement>) {
@@ -70,6 +74,7 @@ export function ScoreInput({
       else e.currentTarget.blur();
     }
     if (e.key === 'Escape') {
+      cancelled.current = true;
       setDraft(value == null ? '' : String(value));
       e.currentTarget.blur();
     }
@@ -92,9 +97,10 @@ export function ScoreInput({
           setFocused(true);
           e.currentTarget.select();
         }}
-        onBlur={() => {
+        onBlur={(e) => {
           setFocused(false);
-          commit();
+          if (cancelled.current) cancelled.current = false;
+          else commit(e.currentTarget.value);
         }}
         onKeyDown={onKey}
         className={cx(

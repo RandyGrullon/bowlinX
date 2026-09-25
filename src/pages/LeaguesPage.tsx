@@ -6,12 +6,14 @@ import { joinLeague, useLeaguesByIds, useMyMemberships, usePublicLeagues } from 
 import { roleLabel } from '../lib/league';
 import type { League, Member } from '../lib/types';
 import { AppShell } from '../components/Shell';
+import { useCreateMenu } from '../components/CreateMenu';
 import { useAction } from '../components/feedback';
 import { Badge, Button, Card, Empty, ListSkeleton, LoadError } from '../components/ui';
 
 /** Eventos: tus ligas (privadas y públicas) y las ligas públicas para unirte. Se entra a cada una para ver sus eventos. */
 export default function LeaguesPage() {
   const auth = useAuth();
+  const create = useCreateMenu();
   const navigate = useNavigate();
   const run = useAction();
   const memberships = useMyMemberships(auth.user?.uid);
@@ -50,11 +52,11 @@ export default function LeaguesPage() {
               <ListSkeleton rows={2} />
             ) : mine.data.length === 0 ? (
               <Empty icon={<Shield className="size-8" />} title="Todavía no estás en ninguna">
-                Únete a una pública aquí abajo, o en Home pon el código que te compartieron o crea la tuya.
+                Únete a una pública aquí abajo, o crea la tuya o pon el código que te compartieron.
                 <div className="mt-4">
-                  <Link to="/" className="inline-flex items-center gap-1.5 font-medium text-accent">
-                    <Plus className="size-4" /> Ir a Home
-                  </Link>
+                  <button type="button" onClick={create.openMenu} className="inline-flex items-center gap-1.5 font-medium text-accent">
+                    <Plus className="size-4" /> Crear o unirme con código
+                  </button>
                 </div>
               </Empty>
             ) : (

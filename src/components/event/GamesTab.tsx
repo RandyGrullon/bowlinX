@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { CalendarCheck, Camera, CheckCircle2, Grid3x3, ScanLine, UserPlus, Users, X } from 'lucide-react';
-import { addEntries, fetchEffectiveAverages, removeEntry, saveGame, updateEntry } from '../../lib/data';
+import { CalendarCheck, Camera, CheckCircle2, Grid3x3, Plus, ScanLine, UserPlus, Users, X } from 'lucide-react';
+import { addEntries, addEventGame, fetchEffectiveAverages, removeEntry, saveGame, updateEntry } from '../../lib/data';
 import { useLeagueCtx } from '../../lib/league';
 import { entryLine, slots, type Line } from '../../lib/stats';
 import { NO_PHOTO, type BowlingEvent, type Entry, type Player } from '../../lib/types';
@@ -115,9 +115,17 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" icon={<ScanLine className="size-4" />} onClick={() => setScanFor(null)} disabled={!players.length}>
+        <Button icon={<ScanLine className="size-4" />} onClick={() => setScanFor(null)} disabled={!players.length}>
           {requirePhoto ? 'Verificar con foto' : 'Leer foto'}
         </Button>
+        {isAdmin && event.games < 10 && (
+          <Button
+            icon={<Plus className="size-4" />}
+            onClick={() => run(() => addEventGame(lid, event), `Juego ${event.games + 1} agregado`)}
+          >
+            Otro juego
+          </Button>
+        )}
         {!isTorneo && isAdmin && (
           <Button icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)}>
             Agregar asistentes
@@ -205,8 +213,8 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
                         <Button
                           variant="ghost"
                           size="sm"
-                          title="Anotar por cuadros"
-                          aria-label={`Anotar juegos de ${name} por cuadros`}
+                          title="Anotar (pines, teclado o total)"
+                          aria-label={`Anotar juegos de ${name} (pines, teclado o total)`}
                           onClick={() => setFramesFor({ entryId: l.entry.id, game: firstOpen })}
                           icon={<Grid3x3 className={cx('size-4', l.entry.frames && Object.keys(l.entry.frames).length ? 'text-accent' : 'text-muted')} />}
                         />
@@ -247,7 +255,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
           <span>Esta liga no exige foto: lo que anotas cuenta de una.</span>
         )}
         <span className="inline-flex items-center gap-1">
-          <Grid3x3 className="size-3" /> Anotar por cuadros
+          <Grid3x3 className="size-3" /> Anotar con pines, teclado o total
         </span>
         <span>Enter baja al siguiente jugador.</span>
       </p>

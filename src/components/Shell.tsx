@@ -1,9 +1,10 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
-import { CalendarDays, House, LogIn, Settings, UserRound, WifiOff } from 'lucide-react';
+import { CalendarDays, House, LogIn, Plus, Settings, UserRound, WifiOff } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { usingEmulators } from '../lib/firebase';
 import { Logo } from './Logo';
+import { useCreateMenu } from './CreateMenu';
 import { NotificationsBell } from './Notifications';
 import { TopLoader, cx } from './ui';
 
@@ -56,9 +57,13 @@ export function TopActions() {
   }
   return (
     <div className="flex items-center gap-1">
-      <NotificationsBell />
+      {/* En el teléfono los avisos van en la barra de abajo. */}
+      <span className="hidden sm:inline-flex">
+        <NotificationsBell />
+      </span>
       <NavLink
         to="/cuenta"
+        data-tour="config"
         aria-label="Configuración de la cuenta"
         title="Configuración de la cuenta"
         className={({ isActive }) =>
@@ -86,8 +91,17 @@ function useSection() {
 
 function DesktopNav() {
   const active = useSection();
+  const create = useCreateMenu();
   return (
-    <nav className="hidden gap-1 sm:flex" aria-label="Secciones">
+    <nav className="hidden gap-1 sm:flex" aria-label="Secciones" data-tour="nav">
+      <button
+        type="button"
+        onClick={create.openMenu}
+        data-tour="crear"
+        className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition hover:brightness-110"
+      >
+        <Plus className="size-4" /> Crear
+      </button>
       {SECTIONS.map(({ to, label, icon: Icon }) => (
         <Link
           key={to}
@@ -106,22 +120,49 @@ function DesktopNav() {
   );
 }
 
+/** Barra de abajo en el teléfono: Home · Eventos · (Crear) · Notificaciones · Perfil. */
 function BottomNav() {
   const active = useSection();
+  const { user } = useAuth();
+  const create = useCreateMenu();
+  const link = ({ to, label, icon: Icon }: (typeof SECTIONS)[number]) => (
+    <Link
+      key={to}
+      to={to}
+      aria-current={active === to ? 'page' : undefined}
+      className={cx('flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition', active === to ? 'text-accent' : 'text-muted')}
+    >
+      <Icon className="size-5" />
+      {label}
+    </Link>
+  );
+  const [home, events, profile] = SECTIONS;
   return (
-    <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur sm:hidden" aria-label="Secciones">
-      <div className="grid grid-cols-3">
-        {SECTIONS.map(({ to, label, icon: Icon }) => (
-          <Link
-            key={to}
-            to={to}
-            aria-current={active === to ? 'page' : undefined}
-            className={cx('flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition', active === to ? 'text-accent' : 'text-muted')}
+    <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur sm:hidden" aria-label="Secciones" data-tour="nav">
+      <div className="grid grid-cols-5 items-end">
+        {link(home)}
+        {link(events)}
+        {/* Crear: el círculo del centro, un poco más grande y levantado. */}
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={create.openMenu}
+            data-tour="crear"
+            aria-label="Crear una liga o un torneo, o unirme con un código"
+            className="-mt-6 mb-1.5 flex size-14 items-center justify-center rounded-full bg-accent text-accent-fg shadow-lg ring-4 ring-bg transition active:scale-95"
           >
-            <Icon className="size-5" />
-            {label}
+            <Plus className="size-7" strokeWidth={2.5} />
+          </button>
+        </div>
+        {user ? (
+          <NotificationsBell variant="nav" />
+        ) : (
+          <Link to="/login" className="flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium text-muted">
+            <LogIn className="size-5" />
+            Entrar
           </Link>
-        ))}
+        )}
+        {link(profile)}
       </div>
     </nav>
   );

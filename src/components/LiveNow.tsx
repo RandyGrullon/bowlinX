@@ -24,7 +24,7 @@ export function LiveNow() {
   const games = liveGames(feeds, leagues, now);
   if (!games.length) return null;
   return (
-    <section className="flex flex-col gap-2" aria-label="En juego ahora">
+    <section className="flex flex-col gap-2" aria-label="En juego ahora" data-tour="en-juego">
       {games.map((g) => (
         <LiveCard key={`${g.feed.lid}:${g.event.id}`} game={g} />
       ))}

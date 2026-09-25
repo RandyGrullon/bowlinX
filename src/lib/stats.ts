@@ -2,6 +2,9 @@ import type { BowlingEvent, Entry, Player } from './types';
 
 export const MAX_SCORE = 300;
 
+/** Mínimo de juegos verificados en la temporada para entrar al ranking de promedio. */
+export const MIN_RANK_GAMES = 6;
+
 export function isValidScore(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= MAX_SCORE;
 }

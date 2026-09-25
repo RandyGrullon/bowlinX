@@ -67,13 +67,21 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
               <Card key={teamId} className="flex flex-col">
                 <div className="flex items-center gap-2 border-b border-line px-4 py-3">
                   <Shield className="size-4 text-accent" />
-                  <h3 className="flex-1 truncate font-semibold">{team.name}</h3>
+                  {/* Tocar el nombre: cambiarlo. */}
+                  <button
+                    type="button"
+                    onClick={() => setRenaming({ id: teamId, name: team.name })}
+                    title="Cambiar el nombre"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                  >
+                    <h3 className="truncate font-semibold">{team.name}</h3>
+                    <Pencil className="size-3.5 shrink-0 text-muted" />
+                  </button>
                   {!!event.teamSize && (
                     <span className={full ? 'text-xs font-medium text-ok' : 'text-xs text-muted'}>
                       {members.length}/{event.teamSize}
                     </span>
                   )}
-                  <Button variant="ghost" size="sm" aria-label="Renombrar" icon={<Pencil className="size-4" />} onClick={() => setRenaming({ id: teamId, name: team.name })} />
                   <Button variant="ghost" size="sm" aria-label="Eliminar equipo" icon={<Trash2 className="size-4" />} onClick={() => remove(teamId, team.name, members)} />
                 </div>
                 <div className="flex gap-4 px-4 pt-2 text-xs text-muted">

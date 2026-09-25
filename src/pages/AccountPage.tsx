@@ -1,18 +1,24 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { Check, ChevronRight, Crown, LogOut, Pencil, Settings } from 'lucide-react';
+import { Check, ChevronRight, Compass, Crown, LogOut, Pencil, Settings } from 'lucide-react';
 import { createProfile, displayName, logout, renameProfile, useAuth } from '../lib/auth';
 import { useLeaguesByIds, useMyMemberships } from '../lib/data';
 import { rememberLeague, roleLabel } from '../lib/league';
 import { BackLink } from '../components/BackLink';
 import { AppShell } from '../components/Shell';
+import { AppearanceCard } from '../components/AppearanceCard';
+import { NotificationsCard } from '../components/NotificationsOptIn';
+import { unsubscribePush } from '../lib/push';
+import { resetTours } from '../components/Tour';
+import { useCreateMenu } from '../components/CreateMenu';
 import { Avatar } from '../components/Avatar';
 import { useAction } from '../components/feedback';
 import { Badge, Button, Card, Field, Input, ListSkeleton, Loading } from '../components/ui';
 
-/** Configuración de la cuenta (engrane de arriba): nombre, correo, mis ligas, superadmin y cerrar sesión. */
+/** Configuración (engrane de arriba): nombre, correo, apariencia, mis ligas, superadmin y cerrar sesión. */
 export default function AccountPage() {
   const auth = useAuth();
+  const create = useCreateMenu();
   const navigate = useNavigate();
   const run = useAction();
   const memberships = useMyMemberships(auth.user?.uid);
@@ -41,6 +47,8 @@ export default function AccountPage() {
     rememberLeague(null);
     // Primero se sale de la pantalla: sin sesión, esta página manda al login.
     navigate('/ligas', { replace: true });
+    // Este teléfono deja de recibir los recordatorios de esta cuenta (sin señal no se espera más de 2 s).
+    await unsubscribePush(user.uid);
     await logout();
   }
 
@@ -95,6 +103,19 @@ export default function AccountPage() {
           )}
         </Card>
 
+        <AppearanceCard />
+        <NotificationsCard />
+        <Button
+          className="self-start"
+          icon={<Compass className="size-4" />}
+          onClick={() => {
+            resetTours();
+            navigate('/');
+          }}
+        >
+          Ver el tour de la app otra vez
+        </Button>
+
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold text-muted">Mis ligas</h2>
           {memberships.loading || leagues.loading ? (
@@ -102,9 +123,9 @@ export default function AccountPage() {
           ) : leagues.data.length === 0 ? (
             <Card className="p-4 text-sm text-muted">
               Todavía no estás en ninguna.{' '}
-              <Link to="/" className="font-medium text-accent">
+              <button type="button" onClick={create.openMenu} className="font-medium text-accent">
                 Crear o unirme a una liga
-              </Link>
+              </button>
             </Card>
           ) : (
             <Card className="divide-y divide-line overflow-hidden">

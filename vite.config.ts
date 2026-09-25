@@ -13,6 +13,8 @@ export default defineConfig({
       registerType: 'prompt',
       manifest: false,
       workbox: {
+        // Notificaciones: push de los recordatorios y abrir la app al tocarlas.
+        importScripts: ['push-sw.js'],
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
         navigateFallback: '/index.html',
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,

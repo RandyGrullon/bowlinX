@@ -30,8 +30,13 @@ export function AutoTeamsModal({
   const defaultSize = event.teamSize || 3;
   const [size, setSize] = useState(defaultSize);
   const [busy, setBusy] = useState(false);
+  // Nombres que les pone el organizador (por posición; vacío = el de siempre).
+  const [names, setNames] = useState<Record<number, string>>({});
   useEffect(() => {
-    if (open) setSize(defaultSize);
+    if (open) {
+      setSize(defaultSize);
+      setNames({});
+    }
   }, [open, defaultSize]);
 
   const nameOf = (e: Entry) => players.find((p) => p.id === e.playerId)?.name ?? '(jugador borrado)';
@@ -52,10 +57,16 @@ export function AutoTeamsModal({
   const spread = proposal.length > 1 ? Math.max(...proposal.map((t) => t.sum)) - Math.min(...proposal.map((t) => t.sum)) : 0;
   const removed = existing.length - Math.min(existing.length, count);
 
+  const nameAt = (i: number, fallback: string) => (names[i] ?? fallback).trim().slice(0, 40) || fallback;
+
   async function apply() {
     setBusy(true);
     const ok = await run(async () => {
-      await applyTeams(lid, event, proposal.map((t) => ({ teamId: t.teamId, name: t.name, entryIds: t.members.map((m) => m.id) })));
+      await applyTeams(
+        lid,
+        event,
+        proposal.map((t, i) => ({ teamId: t.teamId, name: nameAt(i, t.name), entryIds: t.members.map((m) => m.id) })),
+      );
       return true;
     }, `${proposal.length} equipos armados`);
     setBusy(false);
@@ -96,8 +107,15 @@ export function AutoTeamsModal({
           {proposal.map((t, i) => (
             <Card key={i} className="p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="truncate font-semibold">{t.name}</span>
-                <span className="text-xs text-muted tabular-nums">Σ {t.sum}</span>
+                <Input
+                  value={names[i] ?? t.name}
+                  onChange={(e) => setNames((n) => ({ ...n, [i]: e.target.value }))}
+                  maxLength={40}
+                  aria-label={`Nombre del equipo ${i + 1}`}
+                  placeholder={t.name}
+                  className="h-9 flex-1 font-semibold"
+                />
+                <span className="shrink-0 text-xs text-muted tabular-nums">Σ {t.sum}</span>
               </div>
               <ul className="flex flex-col gap-1 text-sm">
                 {t.members.map((m) => (
@@ -111,7 +129,7 @@ export function AutoTeamsModal({
             </Card>
           ))}
         </div>
-        <p className="text-xs text-muted">Después puedes mover jugadores a mano en cada equipo.</p>
+        <p className="text-xs text-muted">Ponle nombre a cada equipo aquí o después. También puedes mover jugadores a mano.</p>
       </div>
     </Modal>
   );

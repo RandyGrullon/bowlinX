@@ -47,8 +47,9 @@
   --bronze: #b0703a;
 }
 
+/* Oscuro: como el teléfono (salvo que se eligió claro) o elegido en Configuración. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #0d0f15;
     --surface: #161922;
@@ -70,6 +71,29 @@
     --silver: #b5bdc9;
     --bronze: #d99a62;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0f15;
+  --surface: #161922;
+  --surface-2: #1e222d;
+  --fg: #eceef3;
+  --muted: #9aa1b0;
+  --line: #2a2f3b;
+  --accent: #8b8cf6;
+  --accent-fg: #0d0f15;
+  --accent-soft: #25264a;
+  --danger: #f07070;
+  --danger-soft: #3a1c1f;
+  --on-danger: #0d0f15;
+  --ok: #4cc987;
+  --ok-soft: #15301f;
+  --warn: #f0b04a;
+  --warn-soft: #362a14;
+  --gold: #e6bf4a;
+  --silver: #b5bdc9;
+  --bronze: #d99a62;
 }
 
 html,
@@ -128,10 +152,14 @@ dialog::backdrop {
   --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --shimmer: rgb(255 255 255 / 0.06);
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
   }
+}
+:root[data-theme="dark"] {
+  --shimmer: rgb(255 255 255 / 0.06);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
 }
 
 @keyframes fade-up {

@@ -38,6 +38,8 @@ import { GameDetailModal } from '../components/event/GameDetailModal';
 import { GamesTab } from '../components/event/GamesTab';
 import { PostSocial } from '../components/social/Social';
 import { LiveBoard } from '../components/LiveBoard';
+import { Tour } from '../components/Tour';
+import { EVENT_TOUR } from '../lib/tours';
 import { MyGamesPanel } from '../components/event/MyGamesPanel';
 import { RosterTab } from '../components/event/RosterTab';
 import { StandingsTab } from '../components/event/StandingsTab';
@@ -163,6 +165,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
             if (await shareLink(`${location.origin}${standalone ? base : `${base}/e/${ev.id}`}`, `${eventLabel(ev)} · BowlingX`)) toast('Link copiado');
           }}
           aria-label="Compartir"
+          data-tour="compartir"
           title="Compartir"
           icon={<Share2 className="size-5" />}
         />
@@ -200,6 +203,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
         )
       ))}
 
+      <Tour name="evento" steps={EVENT_TOUR} when={!isAdmin && !!myPlayerId && ev.date <= today} />
       {/* Jugador: sus juegos primero (los anota mientras juega y los envía a revisión). */}
       {!isAdmin && myPlayerId && !entries.loading && !mySubs.loading && (
         <MyGamesPanel

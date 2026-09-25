@@ -315,7 +315,7 @@ export function SubmitGamesModal({
           </div>
 
           {!photo ? (
-            <PhotoPicker onPicked={onPicked} label={requirePhoto ? 'Adjuntar foto del marcador' : 'Adjuntar foto (opcional)'} />
+            <PhotoPicker onPicked={onPicked} label={requirePhoto ? 'Foto del marcador para verificar' : 'Foto para verificar (opcional)'} />
           ) : (
             <div className="flex flex-col gap-3">
               <PhotoView src={photo.data} />

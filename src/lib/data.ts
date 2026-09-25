@@ -842,6 +842,27 @@ export async function deleteEvent(lid: string, id: string) {
   await commitInChunks(ops);
 }
 
+/** Las participaciones de esos eventos (para descargar la temporada o la liga en Excel), de a 30. */
+export async function fetchEntriesOfEvents(lid: string, eventIds: string[]): Promise<Entry[]> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < eventIds.length; i += 30) chunks.push(eventIds.slice(i, i + 30));
+  const snaps = await Promise.all(chunks.map((chunk) => getDocs(query(col(lid, 'entries'), where('eventId', 'in', chunk)))));
+  return snaps.flatMap((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry));
+}
+
+/** Un juego más en la sesión (hasta 10): en la práctica siguieron jugando. */
+export async function addEventGame(lid: string, event: Pick<BowlingEvent, 'id' | 'games'>) {
+  if (event.games >= 10) return;
+  try {
+    await updateDoc(ref(lid, 'events', event.id), { games: event.games + 1 });
+  } catch (e) {
+    // Otro jugador lo agregó al mismo tiempo (las reglas dejan sumar de uno en uno): ya está.
+    const now = await getDoc(ref(lid, 'events', event.id)).catch(() => null);
+    if (Number(now?.get('games') ?? 0) > event.games) return;
+    throw e;
+  }
+}
+
 /** El jugador confirma (o quita) que va a la práctica. */
 export async function setRsvp(lid: string, eventId: string, playerId: string, going: boolean) {
   await updateDoc(ref(lid, 'events', eventId), { [`rsvp.${playerId}`]: going ? true : deleteField() });
@@ -987,8 +1008,8 @@ export async function renameTeam(lid: string, eventId: string, teamId: string, n
 }
 
 /**
- * Arma los equipos de una vez: reutiliza los equipos existentes en orden, crea los que falten,
- * borra los que sobren y asigna a cada inscrito. Todo en una sola escritura.
+ * Arma los equipos de una vez: reutiliza los equipos existentes en orden (con el nombre que se les dio),
+ * crea los que falten, borra los que sobren y asigna a cada inscrito. Todo en una sola escritura.
  */
 export async function applyTeams(lid: string, event: BowlingEvent, groups: { teamId: string | null; name: string; entryIds: string[] }[]) {
   const batch = writeBatch(db);
@@ -998,6 +1019,8 @@ export async function applyTeams(lid: string, event: BowlingEvent, groups: { tea
     const teamId = g.teamId ?? newId(lid, 'events');
     used.add(teamId);
     if (!g.teamId) eventPatch[`teams.${teamId}`] = { name: g.name, order: Date.now() + i };
+    // Un equipo que se reutiliza se queda con el nombre nuevo si se lo cambiaron.
+    else if (event.teams?.[g.teamId] && event.teams[g.teamId].name !== g.name) eventPatch[`teams.${teamId}.name`] = g.name;
     g.entryIds.forEach((id) => batch.update(ref(lid, 'entries', id), { teamId }));
   });
   Object.keys(event.teams ?? {})

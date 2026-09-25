@@ -4,6 +4,7 @@ import { CalendarDays, Check, ChevronDown, Globe, Lock, Medal, MessageCircleHear
 import { useAuth } from '../lib/auth';
 import { useLeague, useLeaguesByIds, useMembership, useMyMemberships, useSubmissions } from '../lib/data';
 import { useNotifications } from './Notifications';
+import { useCreateMenu } from './CreateMenu';
 import { LeagueContext, rememberLeague, type LeagueCtx } from '../lib/league';
 import { AppFrame, AppShell } from './Shell';
 import { Empty, Loading, Modal, cx } from './ui';
@@ -76,12 +77,14 @@ export default function LeagueShell() {
   const base = ctx.base;
   const standalone = ctx.league.kind === 'torneo';
   const tabs = [
-    standalone ? { to: base, label: 'Torneo', icon: Trophy, end: true } : { to: base, label: 'Calendario', icon: CalendarDays, end: true },
+    standalone
+      ? { to: base, label: 'Torneo', icon: Trophy, end: true, tour: 'tab-calendario' }
+      : { to: base, label: 'Calendario', icon: CalendarDays, end: true, tour: 'tab-calendario' },
     // Los juegos de todos, para felicitar y comentar.
-    { to: `${base}/juegos`, label: 'Juegos', icon: MessageCircleHeart },
-    ...(standalone ? [] : [{ to: `${base}/ranking`, label: 'Ranking', icon: Medal }]),
-    { to: `${base}/perfil`, label: 'Mis juegos', icon: Target },
-    ...(ctx.isAdmin ? [{ to: `${base}/admin`, label: 'Admin', icon: Settings2, count: pending + newNotes }] : []),
+    { to: `${base}/juegos`, label: 'Juegos', icon: MessageCircleHeart, tour: 'tab-juegos' },
+    ...(standalone ? [] : [{ to: `${base}/ranking`, label: 'Ranking', icon: Medal, tour: 'tab-ranking' }]),
+    { to: `${base}/perfil`, label: 'Mis juegos', icon: Target, tour: 'tab-perfil' },
+    ...(ctx.isAdmin ? [{ to: `${base}/admin`, label: 'Admin', icon: Settings2, count: pending + newNotes, tour: 'tab-admin' }] : []),
   ];
 
   return (
@@ -94,18 +97,20 @@ export default function LeagueShell() {
             onClick={() => setSwitching(true)}
             className="flex min-w-0 items-center gap-1 rounded-xl px-2 py-1.5 text-left font-semibold hover:bg-surface-2"
             aria-label={`${ctx.league.name}: cambiar de liga`}
+            data-tour="cambiar-liga"
           >
             <span className="truncate">{ctx.league.name}</span>
             <ChevronDown className="size-4 shrink-0 text-muted" />
           </button>
         }
         subnav={
-          <nav ref={tabsRef} className="no-scrollbar -mx-4 flex gap-1 overflow-x-auto px-4" aria-label="Secciones de la liga">
-            {tabs.map(({ to, label, icon: Icon, end, count }) => (
+          <nav ref={tabsRef} className="no-scrollbar -mx-4 flex gap-1 overflow-x-auto px-4" aria-label="Secciones de la liga" data-tour="secciones">
+            {tabs.map(({ to, label, icon: Icon, end, count, tour }) => (
               <NavLink
                 key={to}
                 to={to}
                 end={end}
+                data-tour={tour}
                 className={({ isActive }) =>
                   cx(
                     'flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-medium transition sm:px-3',
@@ -131,6 +136,7 @@ export default function LeagueShell() {
 }
 
 function LeagueSwitcher({ open, onClose, current }: { open: boolean; onClose: () => void; current: string }) {
+  const create = useCreateMenu();
   const { user } = useAuth();
   const memberships = useMyMemberships(open ? user?.uid : undefined);
   const leagues = useLeaguesByIds(memberships.data.map((m) => m.leagueId));
@@ -157,9 +163,16 @@ function LeagueSwitcher({ open, onClose, current }: { open: boolean; onClose: ()
             {l.id === current && <Check className="size-4 text-accent" />}
           </Link>
         ))}
-        <Link to="/" onClick={onClose} className="mt-2 flex items-center gap-3 rounded-xl border border-dashed border-line px-3 py-2.5 text-sm font-medium text-accent hover:bg-surface-2">
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            create.openMenu();
+          }}
+          className="mt-2 flex items-center gap-3 rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-sm font-medium text-accent hover:bg-surface-2"
+        >
           <Plus className="size-4" /> Crear o unirme a otra liga
-        </Link>
+        </button>
       </div>
     </Modal>
   );

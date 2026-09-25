@@ -14,6 +14,30 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#161922" media="(prefers-color-scheme: dark)" />
+    <script>
+      // Apariencia elegida en Configuración (claro/oscuro y color), antes de pintar: sin parpadeo.
+      (function () {
+        try {
+          var p = JSON.parse(localStorage.getItem('bowlingx:tema') || 'null');
+          if (p && (p.mode === 'light' || p.mode === 'dark')) {
+            document.documentElement.setAttribute('data-theme', p.mode);
+            var bar = p.mode === 'dark' ? '#161922' : '#ffffff';
+            document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+              m.setAttribute('data-media', m.getAttribute('media') || '');
+              m.removeAttribute('media');
+              m.setAttribute('content', bar);
+            });
+          }
+          var css = localStorage.getItem('bowlingx:tema-css');
+          if (css) {
+            var st = document.createElement('style');
+            st.id = 'bowlingx-acento';
+            st.textContent = css;
+            document.head.appendChild(st);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -40,16 +64,32 @@
       #splash .p2 { animation-name: sp-fall2; animation-delay: 0.6s; }
       #splash .p3 { animation-name: sp-fall3; animation-delay: 0.65s; }
       #splash .word { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; animation: sp-word 0.45s ease-out 0.75s both; }
-      #splash .word b { color: #4338ca; }
+      #splash .word b { color: var(--accent, #4338ca); }
+      /* Pinos con borde y sombra: en claro no se pierden contra el fondo. La bola, del color de la app. */
+      #splash .pin-body { fill: #ffffff; stroke: #8e96a8; stroke-width: 1.4; }
+      #splash .pin { filter: drop-shadow(0 2px 1.5px rgb(16 24 40 / 0.22)); }
+      #splash .ball-body { fill: var(--accent, #4338ca); }
+      #splash .ball { filter: drop-shadow(0 3px 3px rgb(16 24 40 / 0.25)); }
+      #splash .lane { stroke: #151822; stroke-opacity: 0.16; }
       @keyframes sp-roll { from { transform: translateX(-160px) rotate(-540deg); } to { transform: none; } }
       @keyframes sp-fall { to { transform: translate(26px, -10px) rotate(80deg); opacity: 0; } }
       @keyframes sp-fall2 { to { transform: translate(10px, -22px) rotate(-70deg); opacity: 0; } }
       @keyframes sp-fall3 { to { transform: translate(30px, 6px) rotate(95deg); opacity: 0; } }
       @keyframes sp-word { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
       @media (prefers-color-scheme: dark) {
-        #splash { background: #0d0f15; color: #eceef3; }
-        #splash .word b { color: #8b8cf6; }
+        :root:not([data-theme="light"]) #splash { background: #0d0f15; color: #eceef3; }
+        :root:not([data-theme="light"]) #splash .word b { color: var(--accent, #8b8cf6); }
+        :root:not([data-theme="light"]) #splash .pin-body { stroke: #c9ccd6; }
+        :root:not([data-theme="light"]) #splash .pin { filter: none; }
+        :root:not([data-theme="light"]) #splash .ball-body { fill: var(--accent, #8b8cf6); }
+        :root:not([data-theme="light"]) #splash .lane { stroke: #8b8cf6; stroke-opacity: 0.35; }
       }
+      :root[data-theme="dark"] #splash { background: #0d0f15; color: #eceef3; }
+      :root[data-theme="dark"] #splash .word b { color: var(--accent, #8b8cf6); }
+      :root[data-theme="dark"] #splash .pin-body { stroke: #c9ccd6; }
+      :root[data-theme="dark"] #splash .pin { filter: none; }
+      :root[data-theme="dark"] #splash .ball-body { fill: var(--accent, #8b8cf6); }
+      :root[data-theme="dark"] #splash .lane { stroke: #8b8cf6; stroke-opacity: 0.35; }
       @media (prefers-reduced-motion: reduce) {
         #splash * { animation: none !important; }
       }
@@ -58,16 +98,16 @@
   <body>
     <div id="splash" aria-hidden="true">
       <svg viewBox="0 0 220 120">
-        <g class="pin p1"><path d="M122 108c-7 0-8-12-4-21 2-5 1-9 1-13 0-7 1-12 3-12s3 5 3 12c0 4-1 8 1 13 4 9 3 21-4 21z" fill="#fff" stroke="#c9ccd6" /><rect x="119" y="72" width="6" height="3" rx="1" fill="#e5484d" /></g>
-        <g class="pin p2"><path d="M142 104c-7 0-8-12-4-21 2-5 1-9 1-13 0-7 1-12 3-12s3 5 3 12c0 4-1 8 1 13 4 9 3 21-4 21z" fill="#fff" stroke="#c9ccd6" /><rect x="139" y="68" width="6" height="3" rx="1" fill="#e5484d" /></g>
-        <g class="pin p3"><path d="M162 108c-7 0-8-12-4-21 2-5 1-9 1-13 0-7 1-12 3-12s3 5 3 12c0 4-1 8 1 13 4 9 3 21-4 21z" fill="#fff" stroke="#c9ccd6" /><rect x="159" y="72" width="6" height="3" rx="1" fill="#e5484d" /></g>
+        <g class="pin p1"><path d="M122 108c-7 0-8-12-4-21 2-5 1-9 1-13 0-7 1-12 3-12s3 5 3 12c0 4-1 8 1 13 4 9 3 21-4 21z" class="pin-body" /><rect x="119" y="72" width="6" height="3" rx="1" fill="#e5484d" /></g>
+        <g class="pin p2"><path d="M142 104c-7 0-8-12-4-21 2-5 1-9 1-13 0-7 1-12 3-12s3 5 3 12c0 4-1 8 1 13 4 9 3 21-4 21z" class="pin-body" /><rect x="139" y="68" width="6" height="3" rx="1" fill="#e5484d" /></g>
+        <g class="pin p3"><path d="M162 108c-7 0-8-12-4-21 2-5 1-9 1-13 0-7 1-12 3-12s3 5 3 12c0 4-1 8 1 13 4 9 3 21-4 21z" class="pin-body" /><rect x="159" y="72" width="6" height="3" rx="1" fill="#e5484d" /></g>
         <g class="ball">
-          <circle cx="104" cy="92" r="17" fill="#4338ca" />
-          <circle cx="99" cy="85" r="2.6" fill="#e8e7fb" />
-          <circle cx="107" cy="83" r="2.6" fill="#e8e7fb" />
-          <circle cx="104" cy="91" r="2.6" fill="#e8e7fb" />
+          <circle class="ball-body" cx="104" cy="92" r="17" />
+          <circle cx="99" cy="85" r="2.6" fill="#ffffff" fill-opacity="0.85" />
+          <circle cx="107" cy="83" r="2.6" fill="#ffffff" fill-opacity="0.85" />
+          <circle cx="104" cy="91" r="2.6" fill="#ffffff" fill-opacity="0.85" />
         </g>
-        <line x1="20" y1="110" x2="210" y2="110" stroke="#8b8cf6" stroke-opacity="0.35" stroke-width="2" stroke-linecap="round" />
+        <line class="lane" x1="20" y1="110" x2="210" y2="110" stroke-width="2" stroke-linecap="round" />
       </svg>
       <div class="word">Bowling<b>X</b></div>
     </div>

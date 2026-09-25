@@ -7,6 +7,7 @@ import { FeedbackProvider } from './components/feedback';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AppRouter } from './components/GestureGuards';
 import { NotificationsProvider } from './components/Notifications';
+import { CreateMenuProvider } from './components/CreateMenu';
 import { PwaPrompts } from './components/PwaPrompts';
 import { TopLoader } from './components/ui';
 
@@ -66,28 +67,30 @@ export default function App() {
         <FeedbackProvider>
           <AppRouter>
             <NotificationsProvider>
-              <Suspense fallback={<TopLoader />}>
-                <Routes>
-                  <Route index element={<HomePage />} />
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/ligas" element={<LeaguesPage />} />
-                  <Route path="/unirse/:code" element={<JoinPage />} />
-                  <Route path="/perfil" element={<ProfilePage />} />
-                  <Route path="/cuenta" element={<AccountPage />} />
-                  <Route path="/superadmin" element={<SuperAdminPage />} />
-                  <Route path="/l/:lid" element={<LeagueShell />}>
-                    <Route index element={<LeagueHome />} />
-                    <Route path="ranking" element={<LeagueRanking />} />
-                    <Route path="juegos" element={<GamesFeedPage />} />
-                    <Route path="perfil" element={<LeagueProfilePage />} />
-                    <Route path="admin" element={<AdminPage />} />
-                    <Route path="e/:eventId" element={<EventPage />} />
-                    <Route path="j/:playerId" element={<PlayerRoute />} />
-                    <Route path="*" element={<Navigate to="." replace />} />
-                  </Route>
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </Suspense>
+              <CreateMenuProvider>
+                <Suspense fallback={<TopLoader />}>
+                  <Routes>
+                    <Route index element={<HomePage />} />
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/ligas" element={<LeaguesPage />} />
+                    <Route path="/unirse/:code" element={<JoinPage />} />
+                    <Route path="/perfil" element={<ProfilePage />} />
+                    <Route path="/cuenta" element={<AccountPage />} />
+                    <Route path="/superadmin" element={<SuperAdminPage />} />
+                    <Route path="/l/:lid" element={<LeagueShell />}>
+                      <Route index element={<LeagueHome />} />
+                      <Route path="ranking" element={<LeagueRanking />} />
+                      <Route path="juegos" element={<GamesFeedPage />} />
+                      <Route path="perfil" element={<LeagueProfilePage />} />
+                      <Route path="admin" element={<AdminPage />} />
+                      <Route path="e/:eventId" element={<EventPage />} />
+                      <Route path="j/:playerId" element={<PlayerRoute />} />
+                      <Route path="*" element={<Navigate to="." replace />} />
+                    </Route>
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Suspense>
+              </CreateMenuProvider>
             </NotificationsProvider>
             <PwaPrompts />
           </AppRouter>

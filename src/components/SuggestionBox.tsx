@@ -86,7 +86,7 @@ export function SuggestionBox() {
 
   return (
     <>
-      <Card className="flex items-center gap-3 p-4">
+      <Card className="flex items-center gap-3 p-4" tour="buzon">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-warn-soft text-warn">
           <Lightbulb className="size-5" />
         </div>

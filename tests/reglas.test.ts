@@ -403,6 +403,22 @@ describe('anotadores', () => {
   });
 });
 
+describe('juegos de la sesión', () => {
+  it('en una práctica un jugador suma un juego (de uno en uno, hasta 10); en un torneo no', async () => {
+    await assertSucceeds(updateDoc(doc(luis(), 'leagues/priv/events/e1'), { games: 4 }));
+    await assertFails(updateDoc(doc(luis(), 'leagues/priv/events/e1'), { games: 6 }));
+    await assertFails(updateDoc(doc(luis(), 'leagues/priv/events/e1'), { games: 3 }));
+    await assertFails(updateDoc(doc(ana(), 'leagues/priv/events/e1'), { games: 5 }));
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'leagues/priv/events/p10'), { type: 'practica', name: '', date: '2026-09-22', games: 10, teams: {}, playerCount: 0 });
+      await setDoc(doc(ctx.firestore(), 'leagues/priv/events/t1'), { type: 'torneo', name: 'Copa', date: '2026-09-22', games: 3, teams: {}, playerCount: 0 });
+    });
+    await assertFails(updateDoc(doc(luis(), 'leagues/priv/events/p10'), { games: 11 }));
+    await assertFails(updateDoc(doc(luis(), 'leagues/priv/events/t1'), { games: 4 }));
+    await assertSucceeds(updateDoc(doc(sofi(), 'leagues/priv/events/t1'), { games: 4 }));
+  });
+});
+
 describe('juegos en vivo desde el teléfono', () => {
   const live = (playerId: string, scores: (number | null)[], extra: Record<string, unknown> = {}) => ({
     eventId: 'e1',
@@ -624,6 +640,25 @@ describe('buzón de sugerencias', () => {
     await assertFails(getDocs(collection(org(), 'leagues/priv/limits')));
     await assertSucceeds(deleteDoc(doc(org(), 'leagues/priv/limits/u-luis')));
     await assertSucceeds(deleteDoc(doc(org(), 'leagues/priv/limits/u-nadie')));
+  });
+});
+
+describe('teléfonos suscritos a notificaciones', () => {
+  const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', p256dh: 'BPk', auth: 'xyz', ua: 'Android' };
+  it('cada cuenta guarda y borra solo los suyos; nadie más los ve', async () => {
+    await assertSucceeds(setDoc(doc(ana(), 'users/u-ana/push/t1'), { ...sub, updatedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(ana(), 'users/u-luis/push/t1'), { ...sub, updatedAt: serverTimestamp() }));
+    await assertFails(getDocs(collection(org(), 'users/u-ana/push')));
+    await assertFails(setDoc(doc(ana(), 'users/u-ana/push/t2'), { ...sub, endpoint: 'http://malo', updatedAt: serverTimestamp() }));
+    // Solo servicios de push conocidos (el envío no le escribe a cualquier dirección).
+    await assertFails(setDoc(doc(ana(), 'users/u-ana/push/t4'), { ...sub, endpoint: 'https://mi-servidor.com/fcm.googleapis.com/x', updatedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(ana(), 'users/u-ana/push/t5'), { ...sub, endpoint: 'https://fcm.googleapis.com.malo.com/x', updatedAt: serverTimestamp() }));
+    for (const endpoint of ['https://web.push.apple.com/QGx', 'https://updates.push.services.mozilla.com/wpush/v2/g', 'https://wns2-bl2p.notify.windows.com/w/?token=a']) {
+      await assertSucceeds(setDoc(doc(ana(), 'users/u-ana/push/t6'), { ...sub, endpoint, updatedAt: serverTimestamp() }));
+    }
+    await assertFails(setDoc(doc(ana(), 'users/u-ana/push/t3'), { ...sub, extra: 1, updatedAt: serverTimestamp() }));
+    await assertSucceeds(getDocs(collection(ana(), 'users/u-ana/push')));
+    await assertSucceeds(deleteDoc(doc(ana(), 'users/u-ana/push/t1')));
   });
 });
 

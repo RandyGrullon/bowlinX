@@ -3,13 +3,11 @@ import { Link, useSearchParams } from 'react-router';
 import { CalendarCheck, Flame, Layers, Medal, Target } from 'lucide-react';
 import { useEntriesOfEvents, useEvents, usePlayers } from '../lib/data';
 import { useLeagueCtx } from '../lib/league';
-import { playerStats, rank } from '../lib/stats';
+import { MIN_RANK_GAMES as MIN_GAMES, playerStats, rank } from '../lib/stats';
 import type { Entry } from '../lib/types';
 import { AnimatedNumber, Card, Empty, ListSkeleton, LoadError, Position, Tabs, cx } from '../components/ui';
 import { Avatar } from '../components/Avatar';
-
-/** Mínimo de juegos verificados en la temporada para entrar al ranking de promedio. */
-const MIN_GAMES = 6;
+import { LeagueExcelButton } from '../components/LeagueExcelButton';
 
 type Metric = 'promedio' | 'juego' | 'serie' | 'asistencia';
 
@@ -32,7 +30,7 @@ const metrics: { key: Metric; label: string; icon: ReactNode; value: (r: Row) =>
 
 /** Ranking de la liga por temporada (año), para motivar a ir a las prácticas. */
 export default function RankingPage() {
-  const { lid, base, myPlayerId } = useLeagueCtx();
+  const { lid, base, myPlayerId, member } = useLeagueCtx();
   const [params, setParams] = useSearchParams();
   const events = useEvents(lid);
   const players = usePlayers(lid);
@@ -100,6 +98,7 @@ export default function RankingPage() {
               ))}
             </select>
           )}
+          {member && events.data.length > 0 && <LeagueExcelButton year={year} events={events.data} players={players.data} />}
         </div>
 
         <Tabs items={metrics.map(({ key, label, icon }) => ({ key, label, icon }))} active={metric} onChange={(k) => set('ver', k)} />

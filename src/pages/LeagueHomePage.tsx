@@ -7,7 +7,7 @@ import { eventLabel, formatDate, formatDateLong, toIsoDate } from '../lib/format
 import { useLeagueCtx } from '../lib/league';
 import { liveInfo } from '../lib/live';
 import { useNow } from '../lib/useNow';
-import { eventPosition } from '../lib/stats';
+import { entryLine, eventPosition } from '../lib/stats';
 import type { BowlingEvent, EventType } from '../lib/types';
 import { Announcements } from '../components/AnnouncementCard';
 import { EventFormModal } from '../components/EventFormModal';
@@ -16,6 +16,8 @@ import { LiveActions } from '../components/LiveNow';
 import { useNotifications } from '../components/Notifications';
 import { NextPracticeCard } from '../components/NextPracticeCard';
 import { SuggestionBox } from '../components/SuggestionBox';
+import { Tour } from '../components/Tour';
+import { LEAGUE_TOUR } from '../lib/tours';
 import { useAction } from '../components/feedback';
 import { Badge, Button, Card, Empty, ListSkeleton, LoadError, PageSkeleton, Position, Tabs } from '../components/ui';
 
@@ -81,6 +83,7 @@ function LeagueEvents() {
   return (
     <div className="flex flex-col gap-5">
       <LeagueHeader />
+      <Tour name="liga" steps={LEAGUE_TOUR} when={!!member} />
       {!member && league.visibility === 'public' && <JoinBanner />}
       {/* Lo que se está jugando ahora: lo ve toda la liga (y quien mira una liga pública). */}
       {liveEvents.map(({ event: ev, info }) => (
@@ -133,6 +136,8 @@ function LeagueEvents() {
                 const played = myEventIds.has(e.id);
                 const myEntry = played ? mine.data.find((m) => m.eventId === e.id) : undefined;
                 const pos = isTorneo && myEntry ? eventPosition(e, tournamentEntries.data, myEntry.id) : null;
+                // Tu promedio de esa sesión (los juegos que cuentan).
+                const myLine = myEntry ? entryLine(myEntry, e) : null;
                 const upcoming = e.date >= today;
                 const going = myPlayerId && e.rsvp?.[myPlayerId];
                 return (
@@ -159,6 +164,12 @@ function LeagueEvents() {
                       <div className="truncate text-xs text-muted first-letter:uppercase">
                         {isTorneo ? formatDateLong(e.date) : `${e.games} juegos`}
                         {isTorneo && e.hcpPercent > 0 && ` · Hcp ${e.hcpPercent}% de ${e.hcpBase}`}
+                        {myLine && myLine.games > 0 && (
+                          <>
+                            {' · '}
+                            <span className="font-semibold text-fg">tu promedio {myLine.avg}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                     {pos ? (
