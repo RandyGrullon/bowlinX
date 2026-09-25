@@ -76,11 +76,18 @@ export function MyGamesPanel({
   const stale = draft?.values.some((v, i) => v.trim() !== '' && scores[i] != null) ?? false;
   useEffect(() => {
     if (!draft || !stale) return;
-    saveDraft(lid, playerId, event.id, {
-      ...draft,
-      values: draft.values.map((v, i) => (scores[i] != null ? '' : v)),
-      frames: Object.fromEntries(Object.entries(draft.frames ?? {}).filter(([i]) => scores[+i] == null)),
-    });
+    // No se publica en vivo: la tabla ya manda en esos juegos (y no se pisa lo de otro dispositivo).
+    saveDraft(
+      lid,
+      playerId,
+      event.id,
+      {
+        ...draft,
+        values: draft.values.map((v, i) => (scores[i] != null ? '' : v)),
+        frames: Object.fromEntries(Object.entries(draft.frames ?? {}).filter(([i]) => scores[+i] == null)),
+      },
+      { live: false },
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stale]);
 

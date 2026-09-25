@@ -161,6 +161,116 @@ service cloud.firestore {
         allow update, delete: if isLeagueAdmin(lid);
       }
 
+      // En vivo: los juegos que el jugador va anotando en su teléfono, para que todos los vean.
+      // Solo publica los suyos (id = evento_jugador); no cuentan hasta que se envían y se aprueban.
+      function okScore(l, i) {
+        return l.size() <= i || l[i] == null || (l[i] is int && l[i] >= 0 && l[i] <= 300);
+      }
+      function okScores(l) {
+        return l is list && l.size() <= 10
+          && okScore(l, 0) && okScore(l, 1) && okScore(l, 2) && okScore(l, 3) && okScore(l, 4)
+          && okScore(l, 5) && okScore(l, 6) && okScore(l, 7) && okScore(l, 8) && okScore(l, 9);
+      }
+      match /live/{id} {
+        allow read: if canRead(lid);
+        // En un torneo solo publica quien está inscrito; en una práctica, cualquier jugador de la liga.
+        allow create, update: if myPlayer(lid) != null
+          && id == request.resource.data.eventId + '_' + myPlayer(lid)
+          && request.resource.data.keys().hasOnly(['eventId', 'playerId', 'scores', 'updatedAt'])
+          && request.resource.data.playerId == myPlayer(lid)
+          && okScores(request.resource.data.scores)
+          && request.resource.data.updatedAt == request.time
+          && exists(/databases/$(database)/documents/leagues/$(lid)/events/$(request.resource.data.eventId))
+          && (get(/databases/$(database)/documents/leagues/$(lid)/events/$(request.resource.data.eventId)).data.type != 'torneo'
+              || exists(/databases/$(database)/documents/leagues/$(lid)/entries/$(request.resource.data.eventId + '_' + myPlayer(lid))));
+        allow delete: if resource == null
+          || (myPlayer(lid) != null && resource.data.playerId == myPlayer(lid))
+          || isLeagueAdmin(lid);
+      }
+
+      // Social: me gusta, felicitar y comentar el juego de alguien (cualquier miembro de la liga).
+      // Tiene que ser de un juego que existe y decir bien de quién es (a esa persona le llega el aviso).
+      function socialOk(d) {
+        let entry = /databases/$(database)/documents/leagues/$(lid)/entries/$(d.entryId);
+        return isMember(lid)
+          && d.uid == request.auth.uid
+          && d.name == get(memberPath(lid)).data.name
+          && d.createdAt == request.time
+          && d.entryId is string
+          && exists(entry)
+          && get(entry).data.eventId == d.eventId
+          && get(entry).data.playerId == d.playerId;
+      }
+
+      // Una reacción por persona y juego (id = participación_cuenta); cambiarla la vuelve a avisar.
+      match /reactions/{id} {
+        allow read: if canRead(lid);
+        allow create, update: if socialOk(request.resource.data)
+          && id == request.resource.data.entryId + '_' + request.auth.uid
+          && request.resource.data.keys().hasOnly(['entryId', 'eventId', 'playerId', 'uid', 'name', 'type', 'createdAt'])
+          && request.resource.data.type in ['like', 'felicitar'];
+        allow delete: if resource == null || (signedIn() && resource.data.uid == request.auth.uid) || isLeagueAdmin(lid);
+      }
+
+      // Comentarios: se escriben y se borran (el autor o un admin); no se editan.
+      match /comments/{id} {
+        allow read: if canRead(lid);
+        allow create: if socialOk(request.resource.data)
+          && request.resource.data.keys().hasOnly(['entryId', 'eventId', 'playerId', 'uid', 'name', 'text', 'createdAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && paced(lid, 'lastComment', 3)
+          && getAfter(/databases/$(database)/documents/leagues/$(lid)/limits/$(request.auth.uid)).data.get('commentId', null) == id;
+        allow delete: if resource == null || (signedIn() && resource.data.uid == request.auth.uid) || isLeagueAdmin(lid);
+      }
+
+      // Ritmo: comentarios (uno cada 3 s) y sugerencias (una por minuto) por persona. La hora se marca
+      // en el mismo lote en limits/{uid}; ese documento no lo lee nadie (el buzón sigue siendo anónimo).
+      function paced(lid, field, secs) {
+        let pace = /databases/$(database)/documents/leagues/$(lid)/limits/$(request.auth.uid);
+        return getAfter(pace).data.get(field, null) == request.time
+          && (!exists(pace)
+              || get(pace).data.get(field, request.time - duration.value(secs + 1, 's')) < request.time - duration.value(secs, 's'));
+      }
+      // Cada marca dice qué comentario o nota la usó (un lote no mete muchos con una sola marca).
+      function stamps(d) {
+        return d.keys().hasOnly(['lastComment', 'commentId', 'lastSuggestion', 'suggestionId']);
+      }
+      match /limits/{uid} {
+        allow create: if signedIn() && uid == request.auth.uid && isMember(lid)
+          && stamps(request.resource.data)
+          && request.resource.data.get('lastComment', request.time) == request.time
+          && request.resource.data.get('lastSuggestion', request.time) == request.time;
+        // Solo se pone la hora de ahora en lo que cambia (no se puede adelantar ni borrar la otra).
+        allow update: if signedIn() && uid == request.auth.uid && isMember(lid)
+          && stamps(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastComment', 'commentId', 'lastSuggestion', 'suggestionId'])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastComment', 'commentId'])
+              || request.resource.data.get('lastComment', null) == request.time)
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSuggestion', 'suggestionId'])
+              || request.resource.data.get('lastSuggestion', null) == request.time);
+        // Nadie borra su propia marca (sería saltarse el ritmo); solo al borrar la liga.
+        allow delete: if isLeagueAdmin(lid);
+      }
+
+      // Buzón de sugerencias: cualquier miembro deja una nota anónima (no se guarda quién la escribió);
+      // la leen, marcan y borran los organizadores.
+      match /suggestions/{id} {
+        allow read: if isLeagueAdmin(lid);
+        allow create: if isMember(lid)
+          && request.resource.data.keys().hasOnly(['text', 'read', 'createdAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.read == false
+          && request.resource.data.createdAt == request.time
+          && paced(lid, 'lastSuggestion', 60)
+          && getAfter(/databases/$(database)/documents/leagues/$(lid)/limits/$(request.auth.uid)).data.get('suggestionId', null) == id;
+        allow update: if isLeagueAdmin(lid) && onlyChanged(['read']) && request.resource.data.read is bool;
+        allow delete: if isLeagueAdmin(lid);
+      }
+
       // Juegos que un miembro sube de SU jugador: quedan pendientes hasta que un admin los apruebe.
       // Van a un evento existente o a una fecha (se ponen en la práctica de ese día).
       match /submissions/{id} {

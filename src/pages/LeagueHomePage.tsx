@@ -5,12 +5,17 @@ import { displayName, useAuth } from '../lib/auth';
 import { joinLeague, useEntriesOfEvents, useEvents, usePlayerEntries } from '../lib/data';
 import { eventLabel, formatDate, formatDateLong, toIsoDate } from '../lib/format';
 import { useLeagueCtx } from '../lib/league';
+import { liveInfo } from '../lib/live';
+import { useNow } from '../lib/useNow';
 import { eventPosition } from '../lib/stats';
 import type { BowlingEvent, EventType } from '../lib/types';
 import { Announcements } from '../components/AnnouncementCard';
 import { EventFormModal } from '../components/EventFormModal';
-import { LiveNow } from '../components/LiveNow';
+import { LiveBoard } from '../components/LiveBoard';
+import { LiveActions } from '../components/LiveNow';
+import { useNotifications } from '../components/Notifications';
 import { NextPracticeCard } from '../components/NextPracticeCard';
+import { SuggestionBox } from '../components/SuggestionBox';
 import { useAction } from '../components/feedback';
 import { Badge, Button, Card, Empty, ListSkeleton, LoadError, PageSkeleton, Position, Tabs } from '../components/ui';
 
@@ -29,7 +34,12 @@ function TournamentHome() {
   if (events.loading) return <PageSkeleton />;
   const ev = events.data.find((e) => e.type === 'torneo') ?? events.data[0];
   if (!ev) return <Empty icon={<Trophy className="size-8" />} title="Este torneo no tiene evento">Un admin puede borrarlo y crearlo otra vez.</Empty>;
-  return <EventPage eventId={ev.id} />;
+  return (
+    <div className="flex flex-col gap-5">
+      <EventPage eventId={ev.id} />
+      <SuggestionBox />
+    </div>
+  );
 }
 
 /** Eventos de la liga: anuncios, próxima práctica y la lista de torneos y prácticas (pasadas y por venir). */
@@ -39,6 +49,8 @@ function LeagueEvents() {
   const [params, setParams] = useSearchParams();
   const events = useEvents(lid);
   const mine = usePlayerEntries(lid, myPlayerId ?? undefined);
+  const now = useNow();
+  const feed = useNotifications().feeds.find((f) => f.lid === lid);
   const [creating, setCreating] = useState<EventType | null>(null);
   const type: EventType = params.get('ver') === 'practicas' ? 'practica' : 'torneo';
 
@@ -58,8 +70,9 @@ function LeagueEvents() {
     return [...groups.entries()];
   }, [events.data, type]);
 
-  const today = toIsoDate(new Date());
+  const today = toIsoDate(now);
   const isTorneo = type === 'torneo';
+  const liveEvents = events.data.map((event) => ({ event, info: liveInfo(event, league, now) })).filter((l) => l.info.live);
   const counts = {
     torneo: events.data.filter((e) => e.type === 'torneo').length,
     practica: events.data.filter((e) => e.type === 'practica').length,
@@ -69,7 +82,10 @@ function LeagueEvents() {
     <div className="flex flex-col gap-5">
       <LeagueHeader />
       {!member && league.visibility === 'public' && <JoinBanner />}
-      {member && <LiveNow lid={lid} />}
+      {/* Lo que se está jugando ahora: lo ve toda la liga (y quien mira una liga pública). */}
+      {liveEvents.map(({ event: ev, info }) => (
+        <LiveBoard key={ev.id} event={ev} info={info} actions={feed && <LiveActions feed={feed} event={ev} />} />
+      ))}
 
       {!events.loading && <Announcements events={events.data} />}
       {myPlayerId && <NextPracticeCard events={events.data} playerId={myPlayerId} />}
@@ -164,6 +180,9 @@ function LeagueEvents() {
           </section>
         ))
       )}
+
+      {/* Buzón de sugerencias anónimo (para los organizadores). */}
+      <SuggestionBox />
 
       {isAdmin && (
         <EventFormModal

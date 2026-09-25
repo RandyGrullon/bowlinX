@@ -403,6 +403,230 @@ describe('anotadores', () => {
   });
 });
 
+describe('juegos en vivo desde el teléfono', () => {
+  const live = (playerId: string, scores: (number | null)[], extra: Record<string, unknown> = {}) => ({
+    eventId: 'e1',
+    playerId,
+    scores,
+    updatedAt: serverTimestamp(),
+    ...extra,
+  });
+  it('el jugador publica sus juegos en vivo y todos los de la liga los ven', async () => {
+    await assertSucceeds(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', [190, 210])));
+    await assertSucceeds(getDocs(collection(ana(), 'leagues/priv/live')));
+    await assertFails(getDocs(collection(as('u-extra'), 'leagues/priv/live')));
+    await assertSucceeds(deleteDoc(doc(luis(), 'leagues/priv/live/e1_luis')));
+  });
+  it('al salir de la liga se quitan sus juegos en vivo en el mismo lote', async () => {
+    await assertSucceeds(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', [190])));
+    const db = luis();
+    const b = writeBatch(db);
+    b.delete(doc(db, 'leagues/priv/live/e1_luis'));
+    b.update(doc(db, 'leagues/priv/players/luis'), { uid: null });
+    b.delete(doc(db, 'members/priv_u-luis'));
+    await assertSucceeds(b.commit());
+  });
+  it('al enviar sus juegos, en el mismo lote sale de "en vivo" (tenga o no fila)', async () => {
+    const withLive = (db: Firestore, id: string) => {
+      const b = writeBatch(db);
+      b.delete(doc(db, 'leagues/priv/live/e1_luis'));
+      b.set(doc(db, `leagues/priv/submissions/${id}`), { ...sub('luis', null), createdAt: serverTimestamp() });
+      return b.commit();
+    };
+    await assertSucceeds(withLive(luis(), 'sin-fila'));
+    await assertSucceeds(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', [190])));
+    await assertSucceeds(withLive(luis(), 'con-fila'));
+  });
+  it('solo puntajes de 0 a 300 (o vacíos)', async () => {
+    await assertSucceeds(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', [0, null, 300])));
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', [301])));
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', ['x'.repeat(1000)])));
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', [190.5])));
+  });
+  it('en un torneo solo publica quien está inscrito', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'leagues/priv/events/t9'), { type: 'torneo', name: 'Copa', date: '2026-09-22', games: 3, teams: {}, playerCount: 0 });
+    });
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/t9_luis'), live('luis', [200], { eventId: 't9' })));
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'leagues/priv/entries/t9_luis'), { eventId: 't9', playerId: 'luis', scores: [], photos: [] });
+    });
+    await assertSucceeds(setDoc(doc(luis(), 'leagues/priv/live/t9_luis'), live('luis', [200], { eventId: 't9' })));
+  });
+  it('nadie publica por otro, ni sin jugador, ni en un evento que no existe', async () => {
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/e1_pedro'), live('pedro', [300])));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/live/e1_luis'), live('luis', [300])));
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/nada_luis'), live('luis', [190], { eventId: 'nada' })));
+    await assertFails(setDoc(doc(luis(), 'leagues/priv/live/e1_luis'), live('luis', Array(11).fill(100))));
+  });
+});
+
+describe('social: me gusta, felicitar y comentarios', () => {
+  const like = (uid: string, name: string, extra: Record<string, unknown> = {}) => ({
+    entryId: 'e1_luis',
+    eventId: 'e1',
+    playerId: 'luis',
+    uid,
+    name,
+    type: 'felicitar',
+    createdAt: serverTimestamp(),
+    ...extra,
+  });
+  const comment = (uid: string, name: string, text: string, extra: Record<string, unknown> = {}) => ({
+    entryId: 'e1_luis',
+    eventId: 'e1',
+    playerId: 'luis',
+    uid,
+    name,
+    text,
+    createdAt: serverTimestamp(),
+    ...extra,
+  });
+
+  it('un miembro felicita el juego de otro (una reacción suya por juego) y la cambia o la quita', async () => {
+    await assertSucceeds(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana'), like('u-ana', 'ana')));
+    await assertSucceeds(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana'), like('u-ana', 'ana', { type: 'like' })));
+    await assertFails(deleteDoc(doc(luis(), 'leagues/priv/reactions/e1_luis_u-ana')));
+    await assertSucceeds(deleteDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana')));
+    // Quitarla otra vez (otra pestaña ya la quitó) no da error.
+    await assertSucceeds(deleteDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana')));
+  });
+  it('el nombre es el de su membresía: nadie se hace pasar por otro', async () => {
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana'), like('u-ana', 'Admin de la liga')));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana'), like('u-ana', 'sofi')));
+  });
+  it('no se reacciona por otro, ni con otro id, ni a un juego que no existe o diciendo mal de quién es', async () => {
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-sofi'), like('u-sofi', 'sofi')));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/otro'), like('u-ana', 'ana')));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/e1_nadie_u-ana'), like('u-ana', 'ana', { entryId: 'e1_nadie' })));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana'), like('u-ana', 'ana', { playerId: 'pedro' })));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-ana'), like('u-ana', 'ana', { type: 'odio' })));
+  });
+  it('quien no es miembro no reacciona ni comenta, pero en una liga pública lo ve', async () => {
+    await assertFails(setDoc(doc(as('u-extra'), 'leagues/priv/reactions/e1_luis_u-extra'), like('u-extra', 'extra')));
+    await assertFails(getDocs(collection(as('u-extra'), 'leagues/priv/comments')));
+    await assertSucceeds(getDocs(collection(anon(), 'leagues/pub/comments')));
+  });
+  // Como en la app: el comentario y la marca de ritmo van juntos.
+  const postComment = (db: Firestore, id: string, uid: string, name: string, text: string, extra: Record<string, unknown> = {}) => {
+    const b = writeBatch(db);
+    b.set(doc(db, `leagues/priv/comments/${id}`), comment(uid, name, text, extra));
+    b.set(doc(db, `leagues/priv/limits/${uid}`), { lastComment: serverTimestamp(), commentId: id }, { merge: true });
+    return b.commit();
+  };
+  it('comentar: texto de 1 a 500 letras; lo borra el autor o un admin, nadie lo edita', async () => {
+    await assertSucceeds(postComment(luis(), 'c1', 'u-luis', 'luis', '¡Gracias!'));
+    await assertSucceeds(postComment(ana(), 'c2', 'u-ana', 'ana', '¡Qué juegazo! 🎉'));
+    await assertFails(postComment(sofi(), 'c3', 'u-sofi', 'sofi', ''));
+    await assertFails(postComment(sofi(), 'c4', 'u-sofi', 'sofi', 'x'.repeat(501)));
+    await assertFails(postComment(sofi(), 'c5', 'u-luis', 'luis', 'Me hago pasar'));
+    await assertFails(postComment(sofi(), 'c6', 'u-sofi', 'Luis', 'Con otro nombre'));
+    await assertFails(setDoc(doc(sofi(), 'leagues/priv/comments/c7'), comment('u-sofi', 'sofi', 'Sin marcar el ritmo')));
+    await assertFails(updateDoc(doc(ana(), 'leagues/priv/comments/c2'), { text: 'editado' }));
+    await assertFails(deleteDoc(doc(luis(), 'leagues/priv/comments/c2')));
+    await assertSucceeds(deleteDoc(doc(sofi(), 'leagues/priv/comments/c2')));
+    await assertSucceeds(deleteDoc(doc(luis(), 'leagues/priv/comments/c1')));
+    await assertSucceeds(deleteDoc(doc(luis(), 'leagues/priv/comments/c1')));
+  });
+  it('un comentario cada 3 segundos por persona (nadie llena de spam un juego)', async () => {
+    await assertSucceeds(postComment(ana(), 'r1', 'u-ana', 'ana', 'Uno'));
+    await assertFails(postComment(ana(), 'r2', 'u-ana', 'ana', 'Dos seguido'));
+    await assertSucceeds(postComment(luis(), 'r3', 'u-luis', 'luis', 'Otro sí puede'));
+  });
+  it('no se salta el ritmo borrando su marca ni metiendo muchos en un lote', async () => {
+    await assertSucceeds(postComment(ana(), 'b1', 'u-ana', 'ana', 'Uno'));
+    await assertFails(deleteDoc(doc(ana(), 'leagues/priv/limits/u-ana')));
+    const db = sofi();
+    const b = writeBatch(db);
+    b.set(doc(db, 'leagues/priv/comments/m1'), comment('u-sofi', 'sofi', 'Spam 1'));
+    b.set(doc(db, 'leagues/priv/comments/m2'), comment('u-sofi', 'sofi', 'Spam 2'));
+    b.set(doc(db, 'leagues/priv/limits/u-sofi'), { lastComment: serverTimestamp(), commentId: 'm1' });
+    await assertFails(b.commit());
+    // La marca tiene que decir cuál comentario es.
+    const d = luis();
+    const x = writeBatch(d);
+    x.set(doc(d, 'leagues/priv/comments/m4'), comment('u-luis', 'luis', 'Marca de otro'));
+    x.set(doc(d, 'leagues/priv/limits/u-luis'), { lastComment: serverTimestamp(), commentId: 'otro' });
+    await assertFails(x.commit());
+  });
+  it('no se borra el me gusta, comentario o juego en vivo de otro', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const d = ctx.firestore();
+      await setDoc(doc(d, 'leagues/priv/reactions/e1_luis_u-luis'), like('u-luis', 'luis'));
+      await setDoc(doc(d, 'leagues/priv/comments/k1'), comment('u-luis', 'luis', 'mío'));
+      await setDoc(doc(d, 'leagues/priv/live/e1_luis'), { eventId: 'e1', playerId: 'luis', scores: [190] });
+    });
+    await assertFails(deleteDoc(doc(ana(), 'leagues/priv/reactions/e1_luis_u-luis')));
+    await assertFails(deleteDoc(doc(ana(), 'leagues/priv/comments/k1')));
+    await assertFails(deleteDoc(doc(ana(), 'leagues/priv/live/e1_luis')));
+    // Un admin sí (al limpiar un evento, un jugador o una participación).
+    await assertSucceeds(deleteDoc(doc(sofi(), 'leagues/priv/reactions/e1_luis_u-luis')));
+    await assertSucceeds(deleteDoc(doc(sofi(), 'leagues/priv/live/e1_luis')));
+    await assertSucceeds(getDocs(query(collection(sofi(), 'leagues/priv/comments'), where('eventId', '==', 'e1'))));
+    await assertSucceeds(getDocs(query(collection(sofi(), 'leagues/priv/reactions'), where('entryId', '==', 'e1_luis'))));
+  });
+});
+
+describe('buzón de sugerencias', () => {
+  const note = (text: string, extra: Record<string, unknown> = {}) => ({ text, read: false, createdAt: serverTimestamp(), ...extra });
+  // Como en la app: la nota y la marca de ritmo van juntas.
+  const suggest = (db: Firestore, id: string, uid: string, text: string, extra: Record<string, unknown> = {}) => {
+    const b = writeBatch(db);
+    b.set(doc(db, `leagues/priv/suggestions/${id}`), note(text, extra));
+    b.set(doc(db, `leagues/priv/limits/${uid}`), { lastSuggestion: serverTimestamp(), suggestionId: id }, { merge: true });
+    return b.commit();
+  };
+
+  it('un miembro deja una nota anónima; no puede decir quién la escribió', async () => {
+    await assertSucceeds(suggest(luis(), 's1', 'u-luis', 'Más prácticas los jueves'));
+    await assertFails(suggest(ana(), 's2', 'u-ana', 'Con autor', { uid: 'u-ana' }));
+    await assertFails(suggest(ana(), 's3', 'u-ana', 'Ya leída', { read: true }));
+    await assertFails(suggest(ana(), 's4', 'u-ana', ''));
+    await assertFails(suggest(ana(), 's5', 'u-ana', 'x'.repeat(1001)));
+    await assertFails(suggest(as('u-extra'), 's6', 'u-extra', 'No soy de la liga'));
+    await assertFails(setDoc(doc(ana(), 'leagues/priv/suggestions/s7'), note('Sin marcar el ritmo')));
+  });
+  it('una por minuto por persona', async () => {
+    await assertSucceeds(suggest(ana(), 'r1', 'u-ana', 'Una'));
+    await assertFails(suggest(ana(), 'r2', 'u-ana', 'Otra enseguida'));
+    // Comentar no cuenta para el buzón (y viceversa).
+    await assertSucceeds(suggest(luis(), 'r3', 'u-luis', 'La de Luis'));
+  });
+  it('solo los organizadores leen, marcan y borran las notas; nadie lee quién escribió', async () => {
+    await assertSucceeds(suggest(luis(), 'n1', 'u-luis', 'Idea'));
+    await assertFails(getDocs(collection(luis(), 'leagues/priv/suggestions')));
+    await assertFails(getDoc(doc(ana(), 'leagues/priv/limits/u-luis')));
+    await assertFails(getDoc(doc(org(), 'leagues/priv/limits/u-luis')));
+    await assertSucceeds(getDocs(collection(sofi(), 'leagues/priv/suggestions')));
+    await assertFails(updateDoc(doc(sofi(), 'leagues/priv/suggestions/n1'), { text: 'cambiada' }));
+    await assertSucceeds(updateDoc(doc(sofi(), 'leagues/priv/suggestions/n1'), { read: true }));
+    await assertFails(deleteDoc(doc(luis(), 'leagues/priv/suggestions/n1')));
+    await assertSucceeds(deleteDoc(doc(org(), 'leagues/priv/suggestions/n1')));
+  });
+  it('la marca de ritmo no se adelanta, no se borra la otra ni la propia', async () => {
+    const db = ana();
+    await assertSucceeds(setDoc(doc(db, 'leagues/priv/limits/u-ana'), { lastComment: serverTimestamp() }));
+    await assertFails(setDoc(doc(db, 'leagues/priv/limits/u-ana'), { lastSuggestion: serverTimestamp() }));
+    await assertFails(setDoc(doc(db, 'leagues/priv/limits/u-ana'), { lastComment: new Date(2020, 0, 1) }, { merge: true }));
+    await assertFails(setDoc(doc(db, 'leagues/priv/limits/u-luis'), { lastComment: serverTimestamp() }));
+    await assertFails(deleteDoc(doc(db, 'leagues/priv/limits/u-ana')));
+  });
+  it('muchas notas en un solo lote no pasan', async () => {
+    const db = luis();
+    const b = writeBatch(db);
+    b.set(doc(db, 'leagues/priv/suggestions/x1'), note('Uno'));
+    b.set(doc(db, 'leagues/priv/suggestions/x2'), note('Dos'));
+    b.set(doc(db, 'leagues/priv/limits/u-luis'), { lastSuggestion: serverTimestamp(), suggestionId: 'x1' });
+    await assertFails(b.commit());
+  });
+  it('al borrar la liga, el dueño borra las marcas de cada miembro sin poder leerlas', async () => {
+    await assertSucceeds(suggest(luis(), 'z1', 'u-luis', 'Idea'));
+    await assertFails(getDocs(collection(org(), 'leagues/priv/limits')));
+    await assertSucceeds(deleteDoc(doc(org(), 'leagues/priv/limits/u-luis')));
+    await assertSucceeds(deleteDoc(doc(org(), 'leagues/priv/limits/u-nadie')));
+  });
+});
+
 describe('cuentas', () => {
   it('crea su perfil sin flag de superadmin', async () => {
     await assertSucceeds(setDoc(doc(extra(), 'users/u-new'), { email: 'new@x.com', name: 'Nuevo', createdAt: serverTimestamp() }));

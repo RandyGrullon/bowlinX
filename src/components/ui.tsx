@@ -82,8 +82,12 @@ export function Field({ label, hint, children, className }: { label: string; hin
   );
 }
 
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cx('card-shadow rounded-2xl border border-line bg-surface', className)}>{children}</div>;
+export function Card({ className, style, children }: { className?: string; style?: CSSProperties; children: ReactNode }) {
+  return (
+    <div className={cx('card-shadow rounded-2xl border border-line bg-surface', className)} style={style}>
+      {children}
+    </div>
+  );
 }
 
 type Tone = 'neutral' | 'accent' | 'ok' | 'warn' | 'danger';
@@ -234,6 +238,9 @@ export function LoadError({ error }: { error: Error }) {
   );
 }
 
+/** Se abrió un modal (los avisos lo escuchan para quedar encima). */
+export const MODAL_OPENED = 'bowlingx:modal-abierto';
+
 export function Modal({
   open,
   onClose,
@@ -253,7 +260,11 @@ export function Modal({
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      // Los avisos que están en pantalla vuelven a ponerse encima de este modal.
+      window.dispatchEvent(new Event(MODAL_OPENED));
+    }
     if (!open && d.open) d.close();
   }, [open]);
   return (

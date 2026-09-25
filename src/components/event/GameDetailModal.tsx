@@ -16,12 +16,15 @@ export function GameDetailModal({
   entry,
   name,
   onClose,
+  children,
 }: {
   event: BowlingEvent;
   entries: Entry[];
   entry: Entry | null;
   name: string;
   onClose: () => void;
+  /** Debajo de los juegos (p. ej. me gusta y comentarios). */
+  children?: ReactNode;
 }) {
   const { base } = useLeagueCtx();
   const [photoId, setPhotoId] = useState<{ id: string; game: number } | null>(null);
@@ -107,6 +110,7 @@ export function GameDetailModal({
               </section>
             );
           })}
+          {children}
         </div>
       </Modal>
       <PhotoModal photoId={photoId?.id ?? null} onClose={() => setPhotoId(null)} title={photoId ? `${name} · Juego ${photoId.game + 1}` : ''} />

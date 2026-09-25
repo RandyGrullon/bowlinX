@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2, AlertTriangle } from 'lucide-react';
-import { Button, Modal, cx } from './ui';
+import { Button, MODAL_OPENED, Modal, cx } from './ui';
 
 interface Toast {
   id: number;
@@ -26,6 +26,29 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [pending, setPending] = useState<ConfirmOptions | null>(null);
   const resolver = useRef<(v: boolean) => void>(undefined);
+  const toastLayer = useRef<HTMLDivElement>(null);
+
+  // Los avisos van en la capa de arriba (popover): se ven aunque haya un modal abierto.
+  // Cada aviso nuevo lo vuelve a poner encima del último modal que se abrió.
+  const raise = useCallback((show: boolean) => {
+    const el = toastLayer.current;
+    if (!el || typeof el.showPopover !== 'function') return;
+    try {
+      if (el.matches(':popover-open')) el.hidePopover();
+      if (show) el.showPopover();
+    } catch {
+      // sin soporte de popover: se queda como capa fija normal
+    }
+  }, []);
+  useLayoutEffect(() => raise(toasts.length > 0), [toasts, raise]);
+  // Un modal que se abre después tapa los avisos: se vuelven a subir.
+  const showing = toasts.length > 0;
+  useLayoutEffect(() => {
+    if (!showing) return;
+    const onModal = () => raise(true);
+    window.addEventListener(MODAL_OPENED, onModal);
+    return () => window.removeEventListener(MODAL_OPENED, onModal);
+  }, [showing, raise]);
 
   const toast = useCallback((text: string, tone: Toast['tone'] = 'ok') => {
     const id = Date.now() + Math.random();
@@ -63,7 +86,11 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       >
         <div className="text-sm text-muted">{pending?.message}</div>
       </Modal>
-      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-50 flex flex-col items-center gap-2 px-4 sm:bottom-6">
+      <div
+        ref={toastLayer}
+        popover="manual"
+        className="pointer-events-none fixed inset-x-0 top-auto bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-50 m-0 flex h-auto w-auto max-w-none flex-col items-center gap-2 overflow-visible border-0 bg-transparent p-0 px-4 sm:bottom-6"
+      >
         {toasts.map((t) => (
           <div
             key={t.id}

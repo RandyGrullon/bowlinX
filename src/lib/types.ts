@@ -161,6 +161,61 @@ export interface Submission {
   reviewedAt?: { toMillis(): number } | null;
 }
 
+/**
+ * leagues/{lid}/live/{eventId}_{playerId}: los juegos que el jugador va anotando en su teléfono,
+ * publicados para que todos los vean en vivo. No cuentan hasta que los envía y un admin los aprueba.
+ */
+export interface LiveScore {
+  id: string;
+  eventId: string;
+  playerId: string;
+  scores: (number | null)[];
+  updatedAt?: { toMillis(): number } | null;
+}
+
+/**
+ * leagues/{lid}/suggestions/{id}: nota del buzón de sugerencias. Es anónima: la nota no guarda quién la
+ * escribió, solo el mensaje; la marca de ritmo (limits/{uid}) no la puede leer nadie desde la app.
+ * La leen los organizadores (dueño y admins).
+ */
+export interface Suggestion {
+  id: string;
+  text: string;
+  /** Ya la vio un organizador. */
+  read: boolean;
+  createdAt?: { toMillis(): number } | null;
+}
+
+/** Reacción al juego de alguien: me gusta o felicitar (una por persona y juego). */
+export type ReactionType = 'like' | 'felicitar';
+
+/** leagues/{lid}/reactions/{entryId}_{uid} */
+export interface Reaction {
+  id: string;
+  /** Participación (juego de un jugador en un evento). */
+  entryId: string;
+  eventId: string;
+  /** Dueño del juego (a quien le llega el aviso). */
+  playerId: string;
+  /** Quien reacciona. */
+  uid: string;
+  name: string;
+  type: ReactionType;
+  createdAt?: { toMillis(): number } | null;
+}
+
+/** leagues/{lid}/comments/{id}: comentario en el juego de alguien. */
+export interface GameComment {
+  id: string;
+  entryId: string;
+  eventId: string;
+  playerId: string;
+  uid: string;
+  name: string;
+  text: string;
+  createdAt?: { toMillis(): number } | null;
+}
+
 export interface Photo {
   id: string;
   /** data URL JPEG comprimida */

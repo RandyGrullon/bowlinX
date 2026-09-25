@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { publishLiveScores } from './data';
 import type { GameFrames } from './types';
 
 /**
@@ -74,8 +75,104 @@ export function latestDraft(lid: string, playerId: string): GameDraft | null {
   return best;
 }
 
-/** Guarda el borrador de ese evento; sin juegos anotados (o null), lo borra. */
-export function saveDraft(lid: string, playerId: string, eventId: string, d: Pick<GameDraft, 'values' | 'frames' | 'date'> | null) {
+// ---- En vivo: lo anotado en un evento se publica para que toda la liga lo vea ----
+// Solo se publica lo que se edita en este teléfono. Nunca se borra lo que publicó otro dispositivo:
+// un teléfono sin borrador (o una computadora) no quita la fila en vivo del jugador.
+interface Pending {
+  timer: number;
+  send: () => void;
+}
+const pendingLive = new Map<string, Pending>();
+
+/**
+ * Lo último que este dispositivo publicó en cada evento (valores sin los vacíos del final). Se guarda en el
+ * teléfono para que, aunque la app se cierre o se recargue, al enviar o borrar se quite la fila en vivo.
+ */
+const markerKey = (k: string) => `bowlinx:vivo:${k}`;
+const memoryMarkers = new Map<string, string[]>();
+/** Marca de "falló la última publicación": no coincide con nada, así la próxima vuelve a publicar. */
+const FAILED = ['\u0000'];
+function getMarker(k: string): string[] | null {
+  const raw = readRaw(markerKey(k));
+  if (raw != null) {
+    try {
+      const v = JSON.parse(raw);
+      if (Array.isArray(v)) return v as string[];
+    } catch {
+      // marca dañada: se trata como si no hubiera
+    }
+  }
+  return memoryMarkers.get(k) ?? null;
+}
+function setMarker(k: string, v: string[] | null) {
+  if (v) memoryMarkers.set(k, v);
+  else memoryMarkers.delete(k);
+  try {
+    if (v) localStorage.setItem(markerKey(k), JSON.stringify(v));
+    else localStorage.removeItem(markerKey(k));
+  } catch {
+    // sin almacenamiento: queda la marca en memoria
+  }
+}
+const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+const trimmed = (values: string[]) => {
+  const v = values.map((x) => x.trim());
+  while (v.length && v[v.length - 1] === '') v.pop();
+  return v;
+};
+
+function publishLive(lid: string, playerId: string, eventId: string, values: string[]) {
+  if (eventId === '__fecha__') return;
+  const k = `${lid}/${playerId}/${eventId}`;
+  const next = trimmed(values);
+  const before = getMarker(k);
+  if (before && same(before, next)) return;
+  const old = pendingLive.get(k);
+  if (old) window.clearTimeout(old.timer);
+  // Vacío: solo se quita si este dispositivo había publicado algo (lo de otro dispositivo no se toca).
+  if (!next.length && !before?.length) {
+    pendingLive.delete(k);
+    return;
+  }
+  setMarker(k, next);
+  const send = () => {
+    pendingLive.delete(k);
+    publishLiveScores(lid, eventId, playerId, next)
+      .then(() => {
+        // Ya no queda nada publicado: se limpia la marca.
+        if (!next.length && same(getMarker(k) ?? FAILED, next)) setMarker(k, null);
+      })
+      .catch(() => {
+        // Sin permiso o sin señal: el borrador sigue en el teléfono; la próxima vez se vuelve a publicar.
+        if (same(getMarker(k) ?? FAILED, next)) setMarker(k, FAILED);
+      });
+  };
+  pendingLive.set(k, { timer: window.setTimeout(send, 700), send });
+}
+
+// Al guardar el teléfono o cambiar de app se manda ya lo pendiente (en segundo plano los timers se pausan).
+function flushLive() {
+  for (const p of [...pendingLive.values()]) {
+    window.clearTimeout(p.timer);
+    p.send();
+  }
+}
+if (typeof window !== 'undefined') {
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushLive());
+  window.addEventListener('pagehide', flushLive);
+}
+
+/**
+ * Guarda el borrador de ese evento; sin juegos anotados (o null), lo borra.
+ * `live: false` cuando no es un cambio del jugador (p. ej. solo se cargó el borrador): no se publica en vivo.
+ */
+export function saveDraft(
+  lid: string,
+  playerId: string,
+  eventId: string,
+  d: Pick<GameDraft, 'values' | 'frames' | 'date'> | null,
+  { live = true }: { live?: boolean } = {},
+) {
   try {
     if (d && d.values.some((v) => v.trim() !== '')) {
       localStorage.setItem(key(lid, playerId, eventId), JSON.stringify({ ...d, eventId, savedAt: Date.now() }));
@@ -88,6 +185,7 @@ export function saveDraft(lid: string, playerId: string, eventId: string, d: Pic
     // almacenamiento no disponible (modo privado): el borrador solo vive en pantalla
   }
   window.dispatchEvent(new Event(CHANGED));
+  if (live) publishLive(lid, playerId, eventId, d?.values ?? []);
 }
 
 /**
@@ -96,7 +194,11 @@ export function saveDraft(lid: string, playerId: string, eventId: string, d: Pic
  */
 export function clearSent(lid: string, playerId: string, eventId: string, sent: string[]) {
   const cur = loadDraft(lid, playerId, eventId);
-  if (!cur) return;
+  if (!cur) {
+    // Sin almacenamiento en el teléfono: igual se quita de "en vivo" lo que se envió.
+    publishLive(lid, playerId, eventId, []);
+    return;
+  }
   const wasSent = (i: number) => (cur.values[i] ?? '').trim() !== '' && cur.values[i] === sent[i];
   saveDraft(lid, playerId, eventId, {
     ...cur,

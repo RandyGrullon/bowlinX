@@ -17,6 +17,7 @@ import { Badge, Button, Card, Empty, ListSkeleton, LoadError, Skeleton, StatsSke
 import { Stat } from '../components/event/StandingsTab';
 import { Avatar } from '../components/Avatar';
 import { BackLink } from '../components/BackLink';
+import { SuggestionBox } from '../components/SuggestionBox';
 
 /** Página del jugador en la liga: sus números, torneos y prácticas. En una liga pública se ve sin login. */
 export default function PlayerPage({ playerId: own }: { playerId?: string }) {
@@ -348,6 +349,8 @@ export default function PlayerPage({ playerId: own }: { playerId?: string }) {
             </Card>
           </section>
         )}
+        {/* En "Mis juegos": el buzón de sugerencias anónimo (también en torneos sin liga). */}
+        {isOwner && own && <SuggestionBox />}
         {isOwner && member && member.role !== 'owner' && (
           <div className="flex justify-center">
             <Button variant="ghost" size="sm" className="text-muted" icon={<LogOut className="size-4" />} onClick={leave}>

@@ -13,7 +13,16 @@ import {
   Trophy,
   Users,
 } from 'lucide-react';
-import { deleteEvent, useEvent, useEventEntries, useEvents, usePlayerSubmissions, usePlayers } from '../lib/data';
+import {
+  deleteEvent,
+  useCommentsOfEvents,
+  useEvent,
+  useEventEntries,
+  useEvents,
+  usePlayerSubmissions,
+  usePlayers,
+  useReactionsOfEvents,
+} from '../lib/data';
 import { eventLabel, formatDateLong, toIsoDate, typeLabel } from '../lib/format';
 import { useLeagueCtx } from '../lib/league';
 import { liveInfo } from '../lib/live';
@@ -27,6 +36,8 @@ import { Badge, Button, Card, Empty, ListSkeleton, LoadError, PageSkeleton, Tabs
 import { shareLink } from '../components/share';
 import { GameDetailModal } from '../components/event/GameDetailModal';
 import { GamesTab } from '../components/event/GamesTab';
+import { PostSocial } from '../components/social/Social';
+import { LiveBoard } from '../components/LiveBoard';
 import { MyGamesPanel } from '../components/event/MyGamesPanel';
 import { RosterTab } from '../components/event/RosterTab';
 import { StandingsTab } from '../components/event/StandingsTab';
@@ -58,6 +69,9 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const players = usePlayers(lid);
   const events = useEvents(myPlayerId ? lid : undefined);
   const mySubs = usePlayerSubmissions(isAdmin ? undefined : lid, myPlayerId ?? undefined);
+  // Me gusta y comentarios de los juegos (se ven al abrir el juego de alguien).
+  const reactions = useReactionsOfEvents(lid, eventId ? [eventId] : []);
+  const comments = useCommentsOfEvents(lid, eventId ? [eventId] : []);
   const now = useNow();
 
   const loadError = event.error ?? entries.error ?? players.error;
@@ -81,6 +95,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
   const me = myPlayerId ? players.data.find((p) => p.id === myPlayerId) : undefined;
   const today = toIsoDate(now);
   const upcoming = ev.date >= today;
+  const liveNow = liveInfo(ev, league, now);
 
   // Anotador (no admin): solo anota juegos y ve la clasificación.
   const tabs: { key: TabKey; label: string; icon: ReactNode }[] = !canScore
@@ -192,7 +207,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
           playerId={myPlayerId}
           entry={mine}
           subs={mySubs.data.filter((s) => s.eventId === ev.id)}
-          live={liveInfo(ev, league, now)}
+          live={liveNow}
           today={today}
           autoStart={params.get('anotar') === '1'}
           onAutoStarted={() =>
@@ -206,6 +221,18 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
           }
           onOpenEntry={() => mine && setDetail(mine)}
           onSend={() => setSubmitting(true)}
+        />
+      )}
+
+      {/* En juego: cómo va cada uno (lo que está en la tabla, lo enviado y lo que anotan en su teléfono). */}
+      {liveNow.live && (
+        <LiveBoard
+          event={ev}
+          info={liveNow}
+          onOpen={(id) => {
+            const e = entries.data.find((x) => x.id === id);
+            if (e) setDetail(e);
+          }}
         />
       )}
 
@@ -245,7 +272,16 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
         entry={detail ? entries.data.find((e) => e.id === detail.id) ?? detail : null}
         name={detail ? nameOf(detail) : ''}
         onClose={() => setDetail(null)}
-      />
+      >
+        {detail && (
+          <PostSocial
+            entry={detail}
+            reactions={reactions.data.filter((r) => r.entryId === detail.id)}
+            comments={comments.data.filter((c) => c.entryId === detail.id)}
+            isMine={detail.playerId === myPlayerId}
+          />
+        )}
+      </GameDetailModal>
       {me && (
         <SubmitGamesModal
           open={submitting}

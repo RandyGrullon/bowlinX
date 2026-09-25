@@ -9,6 +9,7 @@ import {
   Clock,
   DatabaseBackup,
   Globe,
+  Lightbulb,
   ImageMinus,
   Inbox,
   Lock,
@@ -37,11 +38,13 @@ import {
   usePlayers,
   useSubmissions,
 } from '../lib/data';
+import { useNotifications } from '../components/Notifications';
 import { formatDate } from '../lib/format';
 import { rememberLeague, roleLabel, useLeagueCtx, whatsappUrl } from '../lib/league';
 import type { Member } from '../lib/types';
 import { Avatar } from '../components/Avatar';
 import { InviteCard } from '../components/InviteCard';
+import { SuggestionsPanel } from '../components/SuggestionsPanel';
 import { LeagueForm, leagueInput } from '../components/LeagueFormModal';
 import { useAction, useFeedback } from '../components/feedback';
 import { Badge, Button, Card, ListSkeleton, LoadError, Modal, Tabs, TopLoader, cx } from '../components/ui';
@@ -49,17 +52,19 @@ import { Badge, Button, Card, ListSkeleton, LoadError, Modal, Tabs, TopLoader, c
 const PlayersPage = lazy(() => import('./PlayersPage'));
 const ApprovalsPage = lazy(() => import('./ApprovalsPage'));
 
-type Tab = 'jugadores' | 'aprobar' | 'miembros' | 'liga';
+type Tab = 'jugadores' | 'aprobar' | 'miembros' | 'buzon' | 'liga';
 
 /** Administración de la liga (dueño, admins y superadmin). */
 export default function AdminPage() {
   const { lid, isAdmin, league } = useLeagueCtx();
   const [params, setParams] = useSearchParams();
   const pending = useSubmissions(isAdmin ? lid : undefined, 'pendiente').data.length;
+  const newSuggestions = useNotifications().feeds.find((f) => f.lid === lid)?.suggestions.length ?? 0;
   const tabs: { key: Tab; label: string; icon: ReactNode; count?: number }[] = [
     { key: 'jugadores', label: 'Jugadores', icon: <Users className="size-4" /> },
     { key: 'aprobar', label: 'Aprobar', icon: <Inbox className="size-4" />, count: pending },
     { key: 'miembros', label: 'Miembros', icon: <Shield className="size-4" /> },
+    { key: 'buzon', label: 'Buzón', icon: <Lightbulb className="size-4" />, count: newSuggestions },
     { key: 'liga', label: league.kind === 'torneo' ? 'Datos' : 'Liga', icon: <Settings2 className="size-4" /> },
   ];
   const requested = params.get('tab') as Tab | null;
@@ -74,7 +79,17 @@ export default function AdminPage() {
       <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />
       <Suspense fallback={<TopLoader />}>
         <div key={tab} className="animate-fade-up">
-          {tab === 'jugadores' ? <PlayersPage /> : tab === 'aprobar' ? <ApprovalsPage /> : tab === 'miembros' ? <MembersPanel /> : <SettingsPanel />}
+          {tab === 'jugadores' ? (
+            <PlayersPage />
+          ) : tab === 'aprobar' ? (
+            <ApprovalsPage />
+          ) : tab === 'miembros' ? (
+            <MembersPanel />
+          ) : tab === 'buzon' ? (
+            <SuggestionsPanel />
+          ) : (
+            <SettingsPanel />
+          )}
         </div>
       </Suspense>
     </div>

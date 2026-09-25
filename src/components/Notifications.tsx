@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { Bell, CalendarDays, CheckCircle2, Globe, Inbox, Lock, Megaphone, Trophy, XCircle } from 'lucide-react';
+import { Bell, CalendarDays, CheckCircle2, Globe, Inbox, Lightbulb, Lock, Megaphone, MessageCircle, PartyPopper, Trophy, XCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useLeagueFeeds, useLeaguesByIds, useMyMemberships, type LeagueFeed } from '../lib/data';
 import { parseDate, toIsoDate } from '../lib/format';
@@ -52,16 +52,19 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const items = useMemo(() => buildNotices(feeds.data, leagues.data, today, Date.now()), [feeds.data, leagues.data, today]);
   const unread = items.filter((n) => n.time > seenAt).length;
 
+  // Visto hasta el aviso más nuevo (hora del servidor, no el reloj del teléfono, que puede ir adelantado).
+  const newest = items.reduce((m, n) => Math.max(m, n.time), 0);
   const markAllRead = useCallback(() => {
     if (!user) return;
-    const now = Date.now();
-    setSeenAt(now);
+    // Nunca hacia atrás (si se marcó leída una sugerencia, lo ya visto no vuelve a salir como nuevo).
+    const seen = Math.max(seenAt, newest || Date.now());
+    setSeenAt(seen);
     try {
-      localStorage.setItem(seenKey(user.uid), String(now));
+      localStorage.setItem(seenKey(user.uid), String(seen));
     } catch {
       // sin almacenamiento: se vuelven a ver como nuevos al recargar
     }
-  }, [user]);
+  }, [user, newest, seenAt]);
 
   const value = useMemo(
     () => ({
@@ -107,6 +110,9 @@ const ICONS: Record<NoticeKind, { icon: ReactNode; tone: string }> = {
   aprobado: { icon: <CheckCircle2 className="size-5" />, tone: 'bg-ok-soft text-ok' },
   rechazado: { icon: <XCircle className="size-5" />, tone: 'bg-danger-soft text-danger' },
   'por-aprobar': { icon: <Inbox className="size-5" />, tone: 'bg-warn-soft text-warn' },
+  reaccion: { icon: <PartyPopper className="size-5" />, tone: 'bg-accent-soft text-accent' },
+  comentario: { icon: <MessageCircle className="size-5" />, tone: 'bg-ok-soft text-ok' },
+  sugerencia: { icon: <Lightbulb className="size-5" />, tone: 'bg-warn-soft text-warn' },
 };
 
 /** Campana del encabezado: cuántos avisos nuevos hay y la lista al tocarla. */

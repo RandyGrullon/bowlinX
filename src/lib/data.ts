@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   collection,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -26,16 +27,21 @@ import type {
   BowlingEvent,
   Entry,
   EventType,
+  GameComment,
   GameFrames,
   Invite,
   League,
   LeagueKind,
+  LiveScore,
   LeagueRole,
   Member,
   Photo,
   Player,
   RankBy,
+  Reaction,
+  ReactionType,
   Submission,
+  Suggestion,
   UserProfile,
   Visibility,
 } from './types';
@@ -43,7 +49,17 @@ import { NO_PHOTO } from './types';
 
 // ---------- Rutas: todo lo del boliche vive dentro de una liga ----------
 
-type LeagueCol = 'players' | 'events' | 'entries' | 'submissions' | 'photos';
+type LeagueCol =
+  | 'players'
+  | 'events'
+  | 'entries'
+  | 'submissions'
+  | 'photos'
+  | 'reactions'
+  | 'comments'
+  | 'live'
+  | 'limits'
+  | 'suggestions';
 const col = (lid: string, name: LeagueCol) => collection(db, 'leagues', lid, name);
 const ref = (lid: string, name: LeagueCol, id: string) => doc(db, 'leagues', lid, name, id);
 const newId = (lid: string, name: LeagueCol) => doc(col(lid, name)).id;
@@ -173,6 +189,8 @@ export function usePlayerAcrossLeagues(links: { lid: string; playerId: string }[
 
 export interface LeagueFeed {
   lid: string;
+  /** Cuenta dueña de los avisos (para no avisarle de lo que hizo ella misma). */
+  uid: string;
   playerId: string | null;
   isAdmin: boolean;
   /** Anotador del torneo (torneos sin liga). */
@@ -183,6 +201,12 @@ export interface LeagueFeed {
   mySubs: Submission[];
   /** Envíos por aprobar (solo si es admin de la liga). */
   pending: Submission[];
+  /** Me gusta y felicitaciones a los juegos del jugador de la cuenta. */
+  reactions: Reaction[];
+  /** Comentarios en los juegos del jugador de la cuenta. */
+  comments: GameComment[];
+  /** Organizadores: notas del buzón sin leer. */
+  suggestions: Suggestion[];
 }
 
 /**
@@ -217,15 +241,15 @@ function listenRetry(subscribe: (onError: (e: Error) => void) => () => void, onG
  */
 export function useLeagueFeeds(memberships: Member[], fromDate: string): Live<LeagueFeed[]> {
   const key = memberships
-    .map((m) => `${m.leagueId}:${m.playerId ?? '-'}:${m.role === 'member' ? 'm' : 'a'}:${m.scorer ? 's' : '-'}`)
+    .map((m) => `${m.leagueId}:${m.playerId ?? '-'}:${m.role === 'member' ? 'm' : 'a'}:${m.scorer ? 's' : '-'}:${m.uid}`)
     .sort()
     .join(',');
   const [state, setState] = useState<Live<LeagueFeed[]>>({ data: [], loading: memberships.length > 0, error: null });
   useEffect(() => {
     const items = key
       ? key.split(',').map((k) => {
-          const [lid, pid, role, scorer] = k.split(':');
-          return { lid, playerId: pid === '-' ? null : pid, isAdmin: role === 'a', isScorer: scorer === 's' };
+          const [lid, pid, role, scorer, uid] = k.split(':');
+          return { lid, uid, playerId: pid === '-' ? null : pid, isAdmin: role === 'a', isScorer: scorer === 's' };
         })
       : [];
     if (!items.length) {
@@ -233,12 +257,17 @@ export function useLeagueFeeds(memberships: Member[], fromDate: string): Live<Le
       return;
     }
     let closed = false;
-    type Part = 'events' | 'mySubs' | 'pending';
+    type Part = 'events' | 'mySubs' | 'pending' | 'reactions' | 'comments' | 'suggestions';
     const parts = new Map<string, Partial<Record<Part, unknown[]>>>();
     // Eventos pasados de envíos revisados hace poco: liga -> id -> evento.
     const older = new Map<string, Map<string, BowlingEvent>>();
     const requested = new Set<string>();
-    const needed = (it: (typeof items)[number]): Part[] => ['events', ...(it.playerId ? (['mySubs'] as Part[]) : []), ...(it.isAdmin ? (['pending'] as Part[]) : [])];
+    // Lo que hace falta para mostrar la liga; los me gusta y comentarios llegan cuando lleguen (no la frenan).
+    const needed = (it: (typeof items)[number]): Part[] => [
+      'events',
+      ...(it.playerId ? (['mySubs'] as Part[]) : []),
+      ...(it.isAdmin ? (['pending'] as Part[]) : []),
+    ];
     const publish = () => {
       if (closed) return;
       setState({
@@ -253,47 +282,87 @@ export function useLeagueFeeds(memberships: Member[], fromDate: string): Live<Le
               events: [...upcoming, ...extra],
               mySubs: (got.mySubs ?? []) as Submission[],
               pending: (got.pending ?? []) as Submission[],
+              reactions: (got.reactions ?? []) as Reaction[],
+              comments: (got.comments ?? []) as GameComment[],
+              suggestions: (got.suggestions ?? []) as Suggestion[],
             };
           }),
         loading: items.some((it) => !needed(it).every((p) => parts.get(it.lid)?.[p])),
         error: null,
       });
     };
+    // Eventos pasados que nombran los avisos: envíos revisados y reacciones o comentarios del último mes.
     const fetchOlder = (lid: string) => {
       const got = parts.get(lid);
-      const subs = got?.mySubs as Submission[] | undefined;
-      if (!subs || !got?.events) return;
+      if (!got?.events) return;
       const have = new Set((got.events as BowlingEvent[]).map((e) => e.id));
       const cutoff = Date.now() - 30 * 86400_000;
-      for (const s of subs) {
-        if (s.status === 'pendiente' || !s.eventId || have.has(s.eventId)) continue;
-        if ((s.reviewedAt?.toMillis?.() ?? 0) < cutoff) continue;
-        const k = `${lid}/${s.eventId}`;
+      const recent = (t: { toMillis?(): number } | null | undefined) => (t?.toMillis?.() ?? Date.now()) >= cutoff;
+      const ids = [
+        ...((got.mySubs ?? []) as Submission[]).filter((s) => s.status !== 'pendiente' && recent(s.reviewedAt ?? { toMillis: () => 0 })).map((s) => s.eventId),
+        ...((got.reactions ?? []) as Reaction[]).filter((r) => recent(r.createdAt)).map((r) => r.eventId),
+        ...((got.comments ?? []) as GameComment[]).filter((c) => recent(c.createdAt)).map((c) => c.eventId),
+      ];
+      for (const eventId of new Set(ids)) {
+        if (!eventId || have.has(eventId)) continue;
+        const k = `${lid}/${eventId}`;
         if (requested.has(k)) continue;
         requested.add(k);
-        getDoc(ref(lid, 'events', s.eventId))
+        getDoc(ref(lid, 'events', eventId))
           .then((snap) => {
             if (!snap.exists()) return;
             if (!older.has(lid)) older.set(lid, new Map());
             older.get(lid)!.set(snap.id, { id: snap.id, ...snap.data() } as BowlingEvent);
             publish();
           })
-          .catch(() => undefined);
+          // Sin señal: se vuelve a intentar con el próximo cambio.
+          .catch(() => requested.delete(k));
       }
     };
     const put = (lid: string, part: Part) => (snap: { docs: { id: string; data(): DocumentData }[] }) => {
       parts.set(lid, { ...parts.get(lid), [part]: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
-      if (part !== 'pending') fetchOlder(lid);
+      if (part !== 'pending' && part !== 'suggestions') fetchOlder(lid);
       publish();
     };
     // Si una liga sigue fallando (p. ej. te sacaron), se ignora: los avisos de las demás siguen.
     const skip = (lid: string, part: Part) => () => put(lid, part)({ docs: [] });
     const listen = (lid: string, part: Part, q: Query<DocumentData>) =>
       listenRetry((onError) => onSnapshot(q, put(lid, part), onError), skip(lid, part));
+    // Me gusta y comentarios a tus juegos: solo del último mes (los avisos no muestran más).
+    const since = Timestamp.fromMillis(Date.now() - 30 * 86400_000);
+    const listenSocial = (lid: string, part: 'reactions' | 'comments', playerId: string) => {
+      let bounded = true;
+      return listenRetry(
+        (onError) =>
+          onSnapshot(
+            bounded
+              ? query(col(lid, part), where('playerId', '==', playerId), where('createdAt', '>=', since))
+              : query(col(lid, part), where('playerId', '==', playerId)),
+            put(lid, part),
+            (e) => {
+              // Si la base todavía no tiene el índice (jugador + fecha), se usa la consulta sin límite de fecha.
+              if (bounded && (e as { code?: string }).code === 'failed-precondition') bounded = false;
+              onError(e);
+            },
+          ),
+        skip(lid, part),
+      );
+    };
     const unsubs = items.flatMap((it) => [
       listen(it.lid, 'events', query(col(it.lid, 'events'), where('date', '>=', fromDate))),
-      ...(it.playerId ? [listen(it.lid, 'mySubs', query(col(it.lid, 'submissions'), where('playerId', '==', it.playerId)))] : []),
-      ...(it.isAdmin ? [listen(it.lid, 'pending', query(col(it.lid, 'submissions'), where('status', '==', 'pendiente')))] : []),
+      ...(it.playerId
+        ? [
+            listen(it.lid, 'mySubs', query(col(it.lid, 'submissions'), where('playerId', '==', it.playerId))),
+            listenSocial(it.lid, 'reactions', it.playerId),
+            listenSocial(it.lid, 'comments', it.playerId),
+          ]
+        : []),
+      ...(it.isAdmin
+        ? [
+            listen(it.lid, 'pending', query(col(it.lid, 'submissions'), where('status', '==', 'pendiente'))),
+            listen(it.lid, 'suggestions', query(col(it.lid, 'suggestions'), where('read', '==', false))),
+          ]
+        : []),
     ]);
     return () => {
       closed = true;
@@ -381,32 +450,58 @@ export const usePlayerEntries = (lid: string | undefined, playerId: string | und
   );
 
 /** Participaciones de varios eventos a la vez (posición en cada torneo, ranking de la temporada). */
-export function useEntriesOfEvents(lid: string | undefined, eventIds: string[]): Live<Entry[]> {
+export const useEntriesOfEvents = (lid: string | undefined, eventIds: string[]) => useOfEvents<Entry>(lid, 'entries', eventIds);
+/** Me gusta y felicitaciones de los juegos de esos eventos. */
+export const useReactionsOfEvents = (lid: string | undefined, eventIds: string[]) => useOfEvents<Reaction>(lid, 'reactions', eventIds);
+/** Comentarios de los juegos de esos eventos. */
+export const useCommentsOfEvents = (lid: string | undefined, eventIds: string[]) => useOfEvents<GameComment>(lid, 'comments', eventIds);
+
+/** Documentos de una colección de la liga que son de esos eventos (en grupos de 30, el máximo de "in"). */
+function useOfEvents<T>(lid: string | undefined, name: 'entries' | 'reactions' | 'comments', eventIds: string[]): Live<T[]> {
   const key = lid ? `${lid}:${[...eventIds].sort().join(',')}` : '';
-  const [state, setState] = useState<Live<Entry[]>>({ data: [], loading: eventIds.length > 0, error: null });
+  const [state, setState] = useState<Live<T[]> & { key: string }>({ data: [], loading: eventIds.length > 0, error: null, key: '' });
   useEffect(() => {
     const [league, list] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
     const ids = list ? list.split(',') : [];
     if (!league || !ids.length) {
-      setState({ data: [], loading: false, error: null });
+      setState({ data: [], loading: false, error: null, key });
       return;
     }
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
-    const parts = new Map<number, Entry[]>();
+    const parts = new Map<number, T[]>();
     const unsubs = chunks.map((chunk, i) =>
       onSnapshot(
-        query(col(league, 'entries'), where('eventId', 'in', chunk)),
+        query(col(league, name), where('eventId', 'in', chunk)),
         (snap) => {
-          parts.set(i, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry));
-          setState({ data: [...parts.values()].flat(), loading: parts.size < chunks.length, error: null });
+          parts.set(i, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as T));
+          setState({ data: [...parts.values()].flat(), loading: parts.size < chunks.length, error: null, key });
         },
-        (error) => setState({ data: [], loading: false, error }),
+        (error) => setState({ data: [], loading: false, error, key }),
       ),
     );
     return () => unsubs.forEach((u) => u());
-  }, [key]);
-  return state;
+  }, [key, name]);
+  // Otros eventos (p. ej. "ver más viejos"): cargando desde este mismo render hasta que lleguen.
+  const stale = state.key !== key && eventIds.length > 0;
+  return { data: state.data, error: state.error, loading: state.loading || stale };
+}
+
+/** Envíos de un evento (para ver en vivo lo que mandaron los jugadores). */
+export const useEventSubmissions = (lid: string | undefined, eventId: string | undefined) =>
+  useLiveQuery<Submission>(lid && eventId ? `subs:${lid}:e:${eventId}` : null, () => query(col(lid!, 'submissions'), where('eventId', '==', eventId)));
+
+/** Juegos que los jugadores van anotando en su teléfono en ese evento (en vivo). */
+export const useEventLive = (lid: string | undefined, eventId: string | undefined) =>
+  useLiveQuery<LiveScore>(lid && eventId ? `live:${lid}:e:${eventId}` : null, () => query(col(lid!, 'live'), where('eventId', '==', eventId)));
+
+/** Publica (o quita, si no hay ninguno) los juegos que el jugador lleva anotados en el evento. */
+export async function publishLiveScores(lid: string, eventId: string, playerId: string, values: string[]) {
+  const scores = values.map((v) => (v.trim() === '' ? null : Number(v)));
+  while (scores.length && scores[scores.length - 1] == null) scores.pop();
+  const r = ref(lid, 'live', `${eventId}_${playerId}`);
+  if (!scores.some((s) => s != null)) return deleteDoc(r);
+  await setDoc(r, { eventId, playerId, scores, updatedAt: serverTimestamp() });
 }
 
 export const useSubmissions = (lid: string | undefined, status: Submission['status'] = 'pendiente') =>
@@ -489,7 +584,8 @@ export async function updateLeague(lid: string, patch: Partial<LeagueInput>) {
 
 /** Borra la liga con todo su contenido, miembros e invitación. */
 export async function deleteLeague(lid: string, myUid: string) {
-  const cols: LeagueCol[] = ['entries', 'submissions', 'photos', 'events', 'players'];
+  // Las marcas de ritmo (limits) no se pueden listar (nadie las lee): se borran por cada miembro.
+  const cols: LeagueCol[] = ['reactions', 'comments', 'live', 'suggestions', 'entries', 'submissions', 'photos', 'events', 'players'];
   const [code, members, ...snaps] = await Promise.all([
     getInviteCode(lid),
     getDocs(query(collection(db, 'members'), where('leagueId', '==', lid))),
@@ -497,6 +593,7 @@ export async function deleteLeague(lid: string, myUid: string) {
   ]);
   const ops: ((b: WriteBatch) => void)[] = [];
   snaps.forEach((s) => s.docs.forEach((d) => ops.push((b) => b.delete(d.ref))));
+  members.docs.forEach((d) => ops.push((b) => b.delete(ref(lid, 'limits', String(d.get('uid'))))));
   members.docs.filter((d) => d.get('uid') !== myUid).forEach((d) => ops.push((b) => b.delete(d.ref)));
   if (code) ops.push((b) => b.delete(doc(db, 'invites', code)));
   ops.push((b) => b.delete(doc(db, 'leagues', lid, 'private', 'invite')));
@@ -626,7 +723,10 @@ export async function becomePlayer(lid: string, uid: string, name: string): Prom
 
 /** Salir de la liga (o que un admin saque a alguien): su jugador queda sin cuenta. */
 export async function removeMember(member: Member) {
+  // Sus juegos "en vivo" también se van (si no, seguirían saliendo a nombre de su jugador).
+  const live = member.playerId ? await getDocs(query(col(member.leagueId, 'live'), where('playerId', '==', member.playerId))) : null;
   const batch = writeBatch(db);
+  live?.docs.forEach((d) => batch.delete(d.ref));
   if (member.playerId) batch.update(ref(member.leagueId, 'players', member.playerId), { uid: null });
   batch.delete(doc(db, 'members', member.id));
   await batch.commit();
@@ -659,9 +759,12 @@ export async function updatePlayer(lid: string, id: string, patch: Partial<Omit<
 
 /** Borra el jugador con sus participaciones y envíos; su cuenta, si tiene, queda sin vincular. */
 export async function deletePlayer(lid: string, id: string, uid?: string | null) {
-  const [entries, subs] = await Promise.all([
+  const [entries, subs, reactions, comments, live] = await Promise.all([
     getDocs(query(col(lid, 'entries'), where('playerId', '==', id))),
     getDocs(query(col(lid, 'submissions'), where('playerId', '==', id))),
+    getDocs(query(col(lid, 'reactions'), where('playerId', '==', id))),
+    getDocs(query(col(lid, 'comments'), where('playerId', '==', id))),
+    getDocs(query(col(lid, 'live'), where('playerId', '==', id))),
   ]);
   const ops: ((b: WriteBatch) => void)[] = [];
   entries.docs.forEach((d) => {
@@ -669,7 +772,7 @@ export async function deletePlayer(lid: string, id: string, uid?: string | null)
     ops.push((b) => b.delete(d.ref));
     ops.push((b) => b.update(ref(lid, 'events', eventId), { playerCount: increment(-1) }));
   });
-  subs.docs.forEach((d) => ops.push((b) => b.delete(d.ref)));
+  [...subs.docs, ...reactions.docs, ...comments.docs, ...live.docs].forEach((d) => ops.push((b) => b.delete(d.ref)));
   if (uid) ops.push((b) => b.update(doc(db, 'members', memberId(lid, uid)), { playerId: null }));
   ops.push((b) => b.delete(ref(lid, 'players', id)));
   await commitInChunks(ops);
@@ -695,7 +798,10 @@ export async function createOwnPlayer(lid: string, uid: string, name: string) {
 
 /** Admin: separa la cuenta del jugador (se vinculó al perfil equivocado). */
 export async function unlinkAccount(lid: string, playerId: string, uid: string) {
+  // Lo que esa cuenta publicó en vivo a nombre del jugador se quita (la anotó quien no era).
+  const live = await getDocs(query(col(lid, 'live'), where('playerId', '==', playerId)));
   const batch = writeBatch(db);
+  live.docs.forEach((d) => batch.delete(d.ref));
   batch.update(ref(lid, 'players', playerId), { uid: null });
   batch.update(doc(db, 'members', memberId(lid, uid)), { playerId: null });
   await batch.commit();
@@ -728,13 +834,10 @@ export async function updateEvent(lid: string, id: string, patch: Partial<EventI
 }
 
 export async function deleteEvent(lid: string, id: string) {
-  const [entries, subs, photos] = await Promise.all([
-    getDocs(query(col(lid, 'entries'), where('eventId', '==', id))),
-    getDocs(query(col(lid, 'submissions'), where('eventId', '==', id))),
-    getDocs(query(col(lid, 'photos'), where('eventId', '==', id))),
-  ]);
+  const names: LeagueCol[] = ['entries', 'submissions', 'photos', 'reactions', 'comments', 'live'];
+  const snaps = await Promise.all(names.map((n) => getDocs(query(col(lid, n), where('eventId', '==', id)))));
   const ops: ((b: WriteBatch) => void)[] = [];
-  [...entries.docs, ...subs.docs, ...photos.docs].forEach((d) => ops.push((b) => b.delete(d.ref)));
+  snaps.flatMap((s) => s.docs).forEach((d) => ops.push((b) => b.delete(d.ref)));
   ops.push((b) => b.delete(ref(lid, 'events', id)));
   await commitInChunks(ops);
 }
@@ -793,10 +896,84 @@ export async function saveGame(
 }
 
 export async function removeEntry(lid: string, entry: Entry) {
+  // Con sus me gusta y comentarios.
+  const social = await Promise.all(
+    (['reactions', 'comments'] as const).map((n) => getDocs(query(col(lid, n), where('entryId', '==', entry.id)))),
+  );
+  const ops: ((b: WriteBatch) => void)[] = social.flatMap((s) => s.docs).map((d) => (b: WriteBatch) => b.delete(d.ref));
+  ops.push((b) => b.delete(ref(lid, 'entries', entry.id)));
+  // Lo que anotaba en vivo en ese evento (mismo id que la participación).
+  ops.push((b) => b.delete(ref(lid, 'live', entry.id)));
+  ops.push((b) => b.update(ref(lid, 'events', entry.eventId), { playerCount: increment(-1) }));
+  await commitInChunks(ops);
+}
+
+// ---------- Social: me gusta, felicitar y comentarios en los juegos ----------
+
+export const reactionId = (entryId: string, uid: string) => `${entryId}_${uid}`;
+type SocialTarget = Pick<Entry, 'id' | 'eventId' | 'playerId'>;
+const target = (entry: SocialTarget) => ({ entryId: entry.id, eventId: entry.eventId, playerId: entry.playerId });
+
+/** Me gusta o felicitar el juego de alguien (una reacción por persona; null la quita). */
+export async function setReaction(lid: string, entry: SocialTarget, user: { uid: string; name: string }, type: ReactionType | null) {
+  const r = ref(lid, 'reactions', reactionId(entry.id, user.uid));
+  if (!type) return deleteDoc(r);
+  await setDoc(r, { ...target(entry), uid: user.uid, name: user.name, type, createdAt: serverTimestamp() });
+}
+
+export const MAX_COMMENT = 500;
+/** Segundos entre dos comentarios de la misma persona (las reglas lo exigen). */
+export const COMMENT_PACE_S = 3;
+
+/** Comenta el juego de alguien; junto se marca la hora (las reglas ponen un ritmo: nada de spam). */
+export async function addComment(lid: string, entry: SocialTarget, user: { uid: string; name: string }, text: string) {
   const batch = writeBatch(db);
-  batch.delete(ref(lid, 'entries', entry.id));
-  batch.update(ref(lid, 'events', entry.eventId), { playerCount: increment(-1) });
+  const comment = doc(col(lid, 'comments'));
+  batch.set(comment, {
+    ...target(entry),
+    uid: user.uid,
+    name: user.name,
+    text: text.trim().slice(0, MAX_COMMENT),
+    createdAt: serverTimestamp(),
+  });
+  // La marca dice cuál comentario es: un lote no puede meter muchos comentarios con una sola marca.
+  batch.set(ref(lid, 'limits', user.uid), { lastComment: serverTimestamp(), commentId: comment.id }, { merge: true });
   await batch.commit();
+}
+
+// ---------- Buzón de sugerencias (anónimo) ----------
+
+export const MAX_SUGGESTION = 1000;
+/** Segundos entre dos sugerencias de la misma persona (las reglas lo exigen). */
+export const SUGGESTION_PACE_S = 60;
+
+/**
+ * Deja una nota en el buzón de la liga. No guarda quién la escribió: solo el mensaje y la fecha.
+ * El ritmo (una por minuto) se marca aparte, en un documento que nadie de la app puede leer.
+ */
+export async function sendSuggestion(lid: string, uid: string, text: string) {
+  const batch = writeBatch(db);
+  const note = doc(col(lid, 'suggestions'));
+  batch.set(note, { text: text.trim().slice(0, MAX_SUGGESTION), read: false, createdAt: serverTimestamp() });
+  // La marca de ritmo (que nadie de la app puede leer) dice cuál nota es: una por lote, una por minuto.
+  batch.set(ref(lid, 'limits', uid), { lastSuggestion: serverTimestamp(), suggestionId: note.id }, { merge: true });
+  await batch.commit();
+}
+
+/** Organizadores: las notas del buzón (las nuevas primero en la pantalla). */
+export const useSuggestions = (lid: string | undefined) =>
+  useLiveQuery<Suggestion>(lid ? `sugerencias:${lid}` : null, () => query(col(lid!, 'suggestions'), orderBy('createdAt', 'desc')));
+
+export async function markSuggestions(lid: string, ids: string[], read: boolean) {
+  await commitInChunks(ids.map((id) => (b: WriteBatch) => b.update(ref(lid, 'suggestions', id), { read })));
+}
+
+export async function deleteSuggestion(lid: string, id: string) {
+  await deleteDoc(ref(lid, 'suggestions', id));
+}
+
+export async function deleteComment(lid: string, id: string) {
+  await deleteDoc(ref(lid, 'comments', id));
 }
 
 // ---------- Equipos ----------
@@ -908,6 +1085,8 @@ export async function submitGames(
   if (input.photo && photoId) {
     batch.set(ref(lid, 'photos', photoId), { ...photoFields(input.photo), eventId: input.eventId, createdAt: serverTimestamp() });
   }
+  // Lo enviado sale de "en vivo" (ahora se ve como enviado); lo que siga anotando se vuelve a publicar.
+  if (input.eventId) batch.delete(ref(lid, 'live', `${input.eventId}_${input.playerId}`));
   batch.set(ref(lid, 'submissions', subId), {
     playerId: input.playerId,
     eventId: input.eventId,

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { LeagueFeed } from './data';
-import { formatDate } from './format';
+import { eventLabel, formatDate } from './format';
 import { buildNotices, relativeTime } from './notifications';
-import type { BowlingEvent, League, Submission } from './types';
+import type { BowlingEvent, GameComment, League, Reaction, Submission } from './types';
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -50,7 +50,145 @@ const sub = (id: string, status: Submission['status'], extra: Partial<Submission
   ...extra,
 });
 
-const feed = (extra: Partial<LeagueFeed>): LeagueFeed => ({ lid: 'l1', playerId: 'p1', isAdmin: false, isScorer: false, events: [], mySubs: [], pending: [], ...extra });
+const feed = (extra: Partial<LeagueFeed>): LeagueFeed => ({
+  lid: 'l1',
+  uid: 'u1',
+  playerId: 'p1',
+  isAdmin: false,
+  isScorer: false,
+  events: [],
+  mySubs: [],
+  pending: [],
+  reactions: [],
+  comments: [],
+  suggestions: [],
+  ...extra,
+});
+
+const reaction = (uid: string, name: string, type: Reaction['type'], t: number, entryId = 'e1_p1'): Reaction => ({
+  id: `${entryId}_${uid}`,
+  entryId,
+  eventId: 'e1',
+  playerId: 'p1',
+  uid,
+  name,
+  type,
+  createdAt: at(t),
+});
+
+const comment = (id: string, uid: string, name: string, text: string, t: number): GameComment => ({
+  id,
+  entryId: 'e1_p1',
+  eventId: 'e1',
+  playerId: 'p1',
+  uid,
+  name,
+  text,
+  createdAt: at(t),
+});
+
+describe('buzón de sugerencias', () => {
+  it('a los organizadores les llega un aviso con las notas sin leer (sin autor)', () => {
+    const notes = [
+      { id: 's1', text: 'Más prácticas los jueves', read: false, createdAt: at(now - 2 * HOUR) },
+      { id: 's2', text: 'Cambiar la hora a las 8', read: false, createdAt: at(now - HOUR) },
+    ];
+    const admin = buildNotices([feed({ isAdmin: true, suggestions: notes })], [league('l1')], today, now);
+    expect(admin.map((n) => [n.kind, n.title, n.body, n.to, n.time])).toEqual([
+      ['sugerencia', '2 sugerencias nuevas en el buzón', '“Cambiar la hora a las 8” · anónima', '/l/l1/admin?tab=buzon', now - HOUR],
+    ]);
+    // A un jugador no le llega (aunque por error le llegaran notas).
+    expect(buildNotices([feed({ suggestions: notes })], [league('l1')], today, now)).toEqual([]);
+  });
+});
+
+describe('avisos de tus juegos (me gusta, felicitar y comentarios)', () => {
+  const played = event('e1', 'practica', '2026-09-24');
+
+  it('un aviso por juego con quiénes reaccionaron, sin contar los tuyos', () => {
+    const notices = buildNotices(
+      [
+        feed({
+          events: [played],
+          reactions: [
+            reaction('u2', 'Pedro Pérez', 'felicitar', now - HOUR),
+            reaction('u3', 'Ana Díaz', 'felicitar', now - 2 * HOUR),
+            reaction('u1', 'Yo Mismo', 'like', now - 10 * 60_000),
+          ],
+        }),
+      ],
+      [league('l1')],
+      today,
+      now,
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      kind: 'reaccion',
+      title: 'Pedro y Ana te felicitaron 🎉',
+      body: eventLabel(played),
+      to: '/l/l1/juegos?juego=e1_p1',
+      time: now - HOUR,
+    });
+  });
+
+  it('me gusta de una persona, y reacciones mezcladas', () => {
+    const one = buildNotices([feed({ reactions: [reaction('u2', 'Pedro Pérez', 'like', now - HOUR)] })], [league('l1')], today, now);
+    expect(one[0].title).toBe('A Pedro le gustó tu juego');
+    const mixed = buildNotices(
+      [feed({ reactions: [reaction('u2', 'Pedro', 'like', now - HOUR), reaction('u3', 'Ana', 'felicitar', now - HOUR), reaction('u4', 'Luis', 'like', now)] })],
+      [league('l1')],
+      today,
+      now,
+    );
+    expect(mixed[0].title).toBe('Luis y 2 más reaccionaron a tu juego');
+  });
+
+  it('dos personas con el mismo nombre son dos (y la gramática cuadra)', () => {
+    const notices = buildNotices(
+      [feed({ reactions: [reaction('u2', 'Pedro Pérez', 'felicitar', now - HOUR), reaction('u3', 'Pedro Gómez', 'felicitar', now - 2 * HOUR)] })],
+      [league('l1')],
+      today,
+      now,
+    );
+    expect(notices[0].title).toBe('Pedro y Pedro te felicitaron 🎉');
+  });
+
+  it('los comentarios de un mismo juego van en un solo aviso, con el último', () => {
+    const notices = buildNotices(
+      [
+        feed({
+          comments: [
+            comment('c1', 'u2', 'Pedro Pérez', 'Primero', now - 2 * HOUR),
+            comment('c2', 'u3', 'Ana Díaz', '¡El último!', now - HOUR),
+            comment('c3', 'u2', 'Pedro Pérez', 'Otro de Pedro', now - 3 * HOUR),
+          ],
+        }),
+      ],
+      [league('l1')],
+      today,
+      now,
+    );
+    expect(notices.map((n) => [n.title, n.body, n.time])).toEqual([['Ana y Pedro comentaron tu juego', '“¡El último!”', now - HOUR]]);
+  });
+
+  it('cada comentario de otro es un aviso; los viejos (más de un mes) no', () => {
+    const notices = buildNotices(
+      [
+        feed({
+          comments: [
+            comment('c1', 'u2', 'Pedro Pérez', '¡Qué juegazo!', now - HOUR),
+            comment('c2', 'u1', 'Yo', 'Gracias', now - 30 * 60_000),
+            comment('c3', 'u3', 'Ana', 'Viejo', now - 40 * DAY),
+          ],
+        }),
+      ],
+      [league('l1')],
+      today,
+      now,
+    );
+    expect(notices.map((n) => [n.kind, n.title, n.body])).toEqual([['comentario', 'Pedro comentó tu juego', '“¡Qué juegazo!”']]);
+  });
+});
 
 describe('avisos', () => {
   it('dice de qué liga es cada aviso y si es privada o torneo sin liga', () => {

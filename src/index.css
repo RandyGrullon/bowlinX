@@ -164,7 +164,15 @@ dialog::backdrop {
   50% { opacity: 0.4; transform: scale(0.7); }
 }
 
+@keyframes cheer {
+  0% { transform: scale(1) rotate(0); }
+  40% { transform: scale(1.35) rotate(-12deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
 .animate-fade-up { animation: fade-up 0.35s var(--ease-out) both; }
+/* Al felicitar: el ícono salta. */
+.animate-pop { animation: cheer 0.45s var(--ease-out); }
 .animate-fade-in { animation: fade-in 0.25s ease-out both; }
 
 /* Listas: cada fila entra un poco después de la anterior (tope de 12 para no demorar). */

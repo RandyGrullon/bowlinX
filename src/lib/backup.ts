@@ -3,7 +3,7 @@ import { toIsoDate } from './format';
 import { db } from './firebase';
 
 /** Lo que entra de cada liga. Las fotos no (pesan mucho); los juegos guardan qué foto los verificó. */
-const LEAGUE_COLLECTIONS = ['players', 'events', 'entries', 'submissions'] as const;
+const LEAGUE_COLLECTIONS = ['players', 'events', 'entries', 'submissions', 'reactions', 'comments', 'suggestions'] as const;
 
 const plain = (v: unknown): unknown =>
   v instanceof Timestamp

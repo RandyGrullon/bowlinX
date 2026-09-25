@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Grid3x3, Plus, Send, Sparkles } from 'lucide-react';
 import { submitGames } from '../lib/data';
 import { clearSent, draftCount, latestDraft, loadDraft, restoreDraft, saveDraft } from '../lib/draft';
@@ -64,6 +64,10 @@ export function SubmitGamesModal({
   const [framesFor, setFramesFor] = useState<number | null>(null);
   // El borrador se guarda solo después de cargarlo al abrir (si no, se guardaría lo de la vez anterior).
   const [loaded, setLoaded] = useState(false);
+  // Lo que se cargó al abrir: mientras no se toque, no se publica en vivo (abrir no es anotar).
+  // Una vez que el jugador cambia algo, todo lo que sigue se publica (aunque vuelva a lo de antes).
+  const loadedValues = useRef('');
+  const touched = useRef(false);
 
   const byDate = eventId === BY_DATE;
   const event = recent.find((e) => e.id === eventId);
@@ -87,6 +91,8 @@ export function SubmitGamesModal({
     setDate(id === BY_DATE ? (d?.date ?? today) : today);
     setValues(padded(d?.values, ev?.games));
     setFrames(d?.frames ?? {});
+    loadedValues.current = `${id}:${padded(d?.values, ev?.games).join('|')}`;
+    touched.current = false;
     setPhoto(null);
     setRows([]);
     setRowIdx(null);
@@ -98,7 +104,13 @@ export function SubmitGamesModal({
   // Cada evento tiene su propio borrador en el teléfono.
   useEffect(() => {
     if (!open || !loaded || !eventId) return;
-    saveDraft(lid, player.id, eventId, { date: eventId === BY_DATE ? date : undefined, values, frames });
+    saveDraft(
+      lid,
+      player.id,
+      eventId,
+      { date: eventId === BY_DATE ? date : undefined, values, frames },
+      { live: (touched.current ||= `${eventId}:${values.join('|')}` !== loadedValues.current) },
+    );
   }, [open, loaded, eventId, date, values, frames, lid, player.id]);
 
   function changeEvent(id: string) {
@@ -108,6 +120,7 @@ export function SubmitGamesModal({
       // Ese evento ya tiene juegos en el teléfono: se muestran esos (los de aquí se quedan en su evento).
       setValues(padded(there!.values, ev?.games));
       setFrames(there!.frames ?? {});
+      loadedValues.current = `${id}:${padded(there!.values, ev?.games).join('|')}`;
     } else {
       // Lo anotado se pasa al evento elegido (se había elegido mal el evento).
       saveDraft(lid, player.id, eventId, null);

@@ -24,6 +24,7 @@ const EventPage = lazy(() => import('./pages/EventPage'));
 const PlayerPage = lazy(() => import('./pages/PlayerPage'));
 const LeagueProfilePage = lazy(() => import('./pages/LeagueProfilePage'));
 const RankingPage = lazy(() => import('./pages/RankingPage'));
+const GamesFeedPage = lazy(() => import('./pages/GamesFeedPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 /** Un torneo sin liga no tiene ranking de temporada: vuelve al torneo. */
@@ -77,6 +78,7 @@ export default function App() {
                   <Route path="/l/:lid" element={<LeagueShell />}>
                     <Route index element={<LeagueHome />} />
                     <Route path="ranking" element={<LeagueRanking />} />
+                    <Route path="juegos" element={<GamesFeedPage />} />
                     <Route path="perfil" element={<LeagueProfilePage />} />
                     <Route path="admin" element={<AdminPage />} />
                     <Route path="e/:eventId" element={<EventPage />} />

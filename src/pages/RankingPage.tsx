@@ -106,7 +106,7 @@ export default function RankingPage() {
 
         {error ? (
           <LoadError error={error} />
-        ) : events.loading || players.loading || entries.loading ? (
+        ) : events.loading || players.loading || (entries.loading && !entries.data.length) ? (
           <ListSkeleton rows={6} />
         ) : ranked.length === 0 ? (
           <Empty icon={<Medal className="size-8" />} title="Todavía no hay ranking">

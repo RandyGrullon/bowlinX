@@ -2,7 +2,16 @@ import { eventLabel, formatDate, formatDateLong, parseDate } from './format';
 import type { LeagueFeed } from './data';
 import type { League } from './types';
 
-export type NoticeKind = 'torneo' | 'torneo-hoy' | 'practica' | 'aprobado' | 'rechazado' | 'por-aprobar';
+export type NoticeKind =
+  | 'torneo'
+  | 'torneo-hoy'
+  | 'practica'
+  | 'aprobado'
+  | 'rechazado'
+  | 'por-aprobar'
+  | 'reaccion'
+  | 'comentario'
+  | 'sugerencia';
 
 /** Un aviso de la campana: qué pasó, en qué liga y a dónde lleva. */
 export interface Notice {
@@ -22,6 +31,21 @@ export interface Notice {
 
 const DAY = 86400_000;
 const ms = (t: { toMillis(): number } | null | undefined, fallback: number) => (t && typeof t.toMillis === 'function' ? t.toMillis() : fallback);
+const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
+/**
+ * "Pedro", "Pedro y Ana", "Pedro y 3 más" (el más reciente primero). Cuenta personas (cuentas), no nombres:
+ * dos Pedros distintos son dos. Devuelve también cuántas son (para "felicitó" o "felicitaron").
+ */
+function people(list: { uid: string; name: string }[]): { who: string; count: number } {
+  const byUid = [...new Map(list.map((x) => [x.uid, firstName(x.name)] as const)).values()];
+  const who = byUid.length === 1 ? byUid[0] : byUid.length === 2 ? `${byUid[0]} y ${byUid[1]}` : `${byUid[0]} y ${byUid.length - 1} más`;
+  return { who, count: byUid.length };
+}
+/** Más reciente primero; lo que todavía no tiene hora del servidor, arriba. */
+const newestFirst = <T extends { createdAt?: { toMillis(): number } | null }>(list: T[], now: number) =>
+  [...list].sort((a, b) => ms(b.createdAt, now) - ms(a.createdAt, now));
+/** Link al juego en "Juegos" (se abre con sus me gusta y comentarios). */
+export const postUrl = (lid: string, entryId: string) => `/l/${lid}/juegos?juego=${encodeURIComponent(entryId)}`;
 
 /**
  * Arma los avisos a partir de lo que pasa en las ligas de la cuenta.
@@ -93,6 +117,74 @@ export function buildNotices(feeds: LeagueFeed[], leagues: League[], today: stri
         body: [games, where, !approved && s.note ? `Motivo: ${s.note}` : ''].filter(Boolean).join(' · '),
         to: approved && s.eventId ? `/l/${feed.lid}/e/${s.eventId}` : `/l/${feed.lid}/perfil`,
         time: reviewed,
+      });
+    }
+
+    // Me gusta y felicitaciones a tus juegos (último mes): un aviso por juego, con quiénes fueron.
+    const recent = (t: { toMillis(): number } | null | undefined) => now - ms(t, now) <= 30 * DAY;
+    const byEntry = new Map<string, typeof feed.reactions>();
+    for (const r of feed.reactions) {
+      if (r.uid === feed.uid || !recent(r.createdAt)) continue;
+      byEntry.set(r.entryId, [...(byEntry.get(r.entryId) ?? []), r]);
+    }
+    for (const [entryId, list] of byEntry) {
+      const sorted = newestFirst(list, now);
+      const { who, count } = people(sorted);
+      const many = count > 1;
+      const types = new Set(sorted.map((r) => r.type));
+      const ev = eventsById.get(sorted[0].eventId);
+      out.push({
+        ...base,
+        id: `reaccion:${feed.lid}:${entryId}`,
+        kind: 'reaccion',
+        title:
+          types.size > 1
+            ? `${who} reaccionaron a tu juego`
+            : types.has('felicitar')
+              ? `${who} te ${many ? 'felicitaron' : 'felicitó'} 🎉`
+              : `A ${who} le${many ? 's' : ''} gustó tu juego`,
+        body: ev ? eventLabel(ev) : 'Toca para ver tu juego',
+        to: postUrl(feed.lid, entryId),
+        time: ms(sorted[0].createdAt, now),
+      });
+    }
+
+    // Comentarios en tus juegos (último mes): un aviso por juego, con el último comentario.
+    const commentsByEntry = new Map<string, typeof feed.comments>();
+    for (const c of feed.comments) {
+      if (c.uid === feed.uid || !recent(c.createdAt)) continue;
+      commentsByEntry.set(c.entryId, [...(commentsByEntry.get(c.entryId) ?? []), c]);
+    }
+    for (const [entryId, list] of commentsByEntry) {
+      const sorted = newestFirst(list, now);
+      const { who, count } = people(sorted);
+      const last = sorted[0];
+      const ev = eventsById.get(last.eventId);
+      const text = last.text.trim();
+      out.push({
+        ...base,
+        id: `comentario:${feed.lid}:${entryId}`,
+        kind: 'comentario',
+        title: `${who} ${count > 1 ? 'comentaron' : 'comentó'} tu juego`,
+        body: [`“${text.length > 90 ? `${text.slice(0, 90)}…` : text}”`, ev && eventLabel(ev)].filter(Boolean).join(' · '),
+        to: postUrl(feed.lid, entryId),
+        time: ms(last.createdAt, now),
+      });
+    }
+
+    // Organizadores: notas nuevas en el buzón de sugerencias (un aviso por liga, con la última).
+    const notes = feed.isAdmin ? newestFirst(feed.suggestions, now) : [];
+    if (notes.length) {
+      const n = notes.length;
+      const text = notes[0].text.trim();
+      out.push({
+        ...base,
+        id: `sugerencias:${feed.lid}`,
+        kind: 'sugerencia',
+        title: n === 1 ? 'Nueva sugerencia en el buzón' : `${n} sugerencias nuevas en el buzón`,
+        body: `“${text.length > 90 ? `${text.slice(0, 90)}…` : text}” · anónima`,
+        to: `/l/${feed.lid}/admin?tab=buzon`,
+        time: ms(notes[0].createdAt, now),
       });
     }
 

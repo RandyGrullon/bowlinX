@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useParams } from 'react-router';
-import { CalendarDays, Check, ChevronDown, Globe, Lock, Medal, Plus, Settings2, Target, Trophy } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, Globe, Lock, Medal, MessageCircleHeart, Plus, Settings2, Target, Trophy } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useLeague, useLeaguesByIds, useMembership, useMyMemberships, useSubmissions } from '../lib/data';
+import { useNotifications } from './Notifications';
 import { LeagueContext, rememberLeague, type LeagueCtx } from '../lib/league';
 import { AppFrame, AppShell } from './Shell';
 import { Empty, Loading, Modal, cx } from './ui';
 
 /**
  * Marco de lo que pasa dentro de una liga: arriba el nombre (toca para cambiar de liga) y sus
- * pestañas (Calendario · Ranking · Mis juegos · Admin); abajo, la barra de la app (Home · Eventos · Perfil).
+ * pestañas (Calendario · Juegos · Ranking · Mis juegos · Admin); abajo, la barra de la app (Home · Eventos · Perfil).
  */
 export default function LeagueShell() {
   const { lid } = useParams();
@@ -42,6 +43,7 @@ export default function LeagueShell() {
   }, [ctx]);
 
   const pending = useSubmissions(ctx?.isAdmin ? lid : undefined, 'pendiente').data.length;
+  const newNotes = useNotifications().feeds.find((f) => f.lid === lid)?.suggestions.length ?? 0;
 
   // La pestaña activa siempre a la vista (en el celular no caben todas).
   const tabsRef = useRef<HTMLElement>(null);
@@ -75,9 +77,11 @@ export default function LeagueShell() {
   const standalone = ctx.league.kind === 'torneo';
   const tabs = [
     standalone ? { to: base, label: 'Torneo', icon: Trophy, end: true } : { to: base, label: 'Calendario', icon: CalendarDays, end: true },
+    // Los juegos de todos, para felicitar y comentar.
+    { to: `${base}/juegos`, label: 'Juegos', icon: MessageCircleHeart },
     ...(standalone ? [] : [{ to: `${base}/ranking`, label: 'Ranking', icon: Medal }]),
     { to: `${base}/perfil`, label: 'Mis juegos', icon: Target },
-    ...(ctx.isAdmin ? [{ to: `${base}/admin`, label: 'Admin', icon: Settings2, count: pending }] : []),
+    ...(ctx.isAdmin ? [{ to: `${base}/admin`, label: 'Admin', icon: Settings2, count: pending + newNotes }] : []),
   ];
 
   return (
