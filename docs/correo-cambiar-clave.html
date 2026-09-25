@@ -1,0 +1,65 @@
+<!--
+  Plantilla del correo "Restablecimiento de contraseña" de Firebase.
+  Pegar en: Firebase → Authentication → Templates → Restablecimiento de contraseña → Mensaje.
+  Firebase cambia %DISPLAY_NAME%, %EMAIL% y %LINK% al enviarlo.
+  Solo tablas y estilos en línea: así se ve igual en Gmail, Outlook y el correo del iPhone.
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0d0f15" style="background-color:#0d0f15;margin:0;padding:0;">
+  <tr>
+    <td align="center" style="padding:32px 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;">
+        <!-- Marca -->
+        <tr>
+          <td align="center" style="padding-bottom:24px;">
+            <img src="https://bowlin-x.vercel.app/icon-192.png" width="52" height="52" alt="BowlinX" style="display:block;border:0;border-radius:14px;" />
+            <div style="font-family:'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;font-weight:700;color:#eceef3;letter-spacing:-0.3px;padding-top:10px;">BowlinX</div>
+            <div style="font-family:'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;color:#9aa1b0;padding-top:2px;">Ligas y torneos de boliche</div>
+          </td>
+        </tr>
+        <!-- Tarjeta -->
+        <tr>
+          <td bgcolor="#161922" style="background-color:#161922;border:1px solid #2a2f3b;border-radius:18px;padding:28px 24px;font-family:'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td bgcolor="#25264a" style="background-color:#25264a;border-radius:12px;padding:10px 12px;font-size:20px;line-height:20px;">&#128273;</td>
+              </tr>
+            </table>
+            <h1 style="margin:18px 0 8px;font-size:21px;line-height:28px;font-weight:700;color:#eceef3;">Pon una contraseña nueva</h1>
+            <p style="margin:0 0 6px;font-size:15px;line-height:23px;color:#eceef3;">Hola %DISPLAY_NAME%,</p>
+            <p style="margin:0 0 24px;font-size:15px;line-height:23px;color:#9aa1b0;">
+              Recibimos un pedido para cambiar la contraseña de tu cuenta
+              <span style="color:#eceef3;font-weight:600;">%EMAIL%</span>. Toca el botón y escríbela dos veces; al guardarla entras directo a la app.
+            </p>
+            <!-- Botón -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" bgcolor="#8b8cf6" style="background-color:#8b8cf6;border-radius:12px;">
+                  <a href="%LINK%" target="_blank" style="display:block;padding:14px 20px;font-family:'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#0d0f15;text-decoration:none;border-radius:12px;">Cambiar mi contraseña</a>
+                </td>
+              </tr>
+            </table>
+            <!-- Aviso -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;">
+              <tr>
+                <td bgcolor="#1e222d" style="background-color:#1e222d;border-radius:12px;padding:12px 14px;font-size:13px;line-height:20px;color:#9aa1b0;">
+                  &#9201; El link sirve una sola vez y vence en <span style="color:#eceef3;">1 hora</span>.<br />
+                  &#128274; Si no lo pediste tú, ignora este correo: tu contraseña sigue igual.
+                </td>
+              </tr>
+            </table>
+            <p style="margin:20px 0 4px;font-size:12px;line-height:18px;color:#9aa1b0;">¿El botón no abre? Copia y pega este link en el navegador:</p>
+            <p style="margin:0;font-size:12px;line-height:18px;word-break:break-all;"><a href="%LINK%" target="_blank" style="color:#8b8cf6;text-decoration:underline;">%LINK%</a></p>
+          </td>
+        </tr>
+        <!-- Pie -->
+        <tr>
+          <td align="center" style="padding:22px 8px 0;font-family:'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#646b7a;">
+            Te llegó porque alguien pidió cambiar la contraseña en
+            <a href="https://bowlin-x.vercel.app" target="_blank" style="color:#9aa1b0;text-decoration:none;">bowlin-x.vercel.app</a>.<br />
+            BowlinX &middot; Torneos, prácticas y ranking de tu liga
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
