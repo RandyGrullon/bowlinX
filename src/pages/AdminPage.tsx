@@ -1,15 +1,37 @@
-import { lazy, Suspense, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { DatabaseBackup, ImageMinus, Inbox, Save, Settings2, Shield, ShieldCheck, ShieldOff, Trash2, UserMinus, Users } from 'lucide-react';
+import {
+  CalendarRange,
+  Camera,
+  Clock,
+  DatabaseBackup,
+  Globe,
+  ImageMinus,
+  Inbox,
+  Lock,
+  MapPin,
+  MessageCircle,
+  Pencil,
+  Save,
+  Settings,
+  Settings2,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
+  Trash2,
+  UserMinus,
+  Users,
+} from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { deleteLeague, deleteOldPhotos, removeMember, setMemberRole, updateLeague, useLeagueMembers, usePlayers, useSubmissions } from '../lib/data';
-import { rememberLeague, roleLabel, useLeagueCtx } from '../lib/league';
+import { formatDate } from '../lib/format';
+import { rememberLeague, roleLabel, useLeagueCtx, whatsappUrl } from '../lib/league';
 import type { Member } from '../lib/types';
 import { Avatar } from '../components/Avatar';
 import { InviteCard } from '../components/InviteCard';
 import { LeagueForm, leagueInput } from '../components/LeagueFormModal';
 import { useAction, useFeedback } from '../components/feedback';
-import { Badge, Button, Card, ListSkeleton, LoadError, Tabs, TopLoader } from '../components/ui';
+import { Badge, Button, Card, ListSkeleton, LoadError, Modal, Tabs, TopLoader, cx } from '../components/ui';
 
 const PlayersPage = lazy(() => import('./PlayersPage'));
 const ApprovalsPage = lazy(() => import('./ApprovalsPage'));
@@ -131,16 +153,137 @@ function MembersPanel() {
   );
 }
 
-/** Datos de la liga, invitación y mantenimiento (respaldo, fotos viejas, borrar). */
+/** Datos de la liga (se editan en un modal), invitación y la configuración (respaldo, fotos, borrar). */
 function SettingsPanel() {
+  const { league } = useLeagueCtx();
+  const [editing, setEditing] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
+  const isTournament = league.kind === 'torneo';
+  const season = league.seasonStart && league.seasonEnd ? `${formatDate(league.seasonStart)} – ${formatDate(league.seasonEnd)}` : '';
+  const contact = [league.contactName, league.contactPhone].filter(Boolean).join(' · ');
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card className="flex flex-col gap-4 p-4">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted">{isTournament ? 'Datos del torneo' : 'Datos de la liga'}</p>
+            <h2 className="truncate text-lg font-bold tracking-tight">{league.name}</h2>
+            <Badge tone={league.visibility === 'private' ? 'neutral' : 'accent'} className="mt-1">
+              {league.visibility === 'private' ? <Lock className="size-3" /> : <Globe className="size-3" />}
+              {league.visibility === 'private' ? 'Privada' : 'Pública'}
+            </Badge>
+          </div>
+          <Button size="sm" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>
+            Editar
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Settings className="size-4" />}
+            onClick={() => setConfiguring(true)}
+            aria-label={isTournament ? 'Configuración del torneo' : 'Configuración de la liga'}
+            title="Configuración"
+          />
+        </div>
+        <dl className="grid gap-2.5 text-sm sm:grid-cols-2">
+          <Detail icon={<MapPin className="size-4" />} label="Bolera" value={league.venue} />
+          {!isTournament && <Detail icon={<Clock className="size-4" />} label="Cuándo juegan" value={league.schedule} />}
+          {!isTournament && <Detail icon={<CalendarRange className="size-4" />} label="Temporada" value={season} />}
+          <Detail
+            icon={<MessageCircle className="size-4" />}
+            label="Contacto"
+            value={
+              contact &&
+              (league.contactPhone ? (
+                <a href={whatsappUrl(league.contactPhone)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  {contact}
+                </a>
+              ) : (
+                contact
+              ))
+            }
+          />
+          <Detail
+            icon={<Camera className="size-4" />}
+            label="Foto del marcador"
+            value={league.requirePhoto !== false ? 'Obligatoria para que cuente' : 'Opcional'}
+          />
+        </dl>
+      </Card>
+
+      <InviteCard league={league} />
+
+      <EditLeagueModal open={editing} onClose={() => setEditing(false)} />
+      <LeagueConfigModal open={configuring} onClose={() => setConfiguring(false)} />
+    </div>
+  );
+}
+
+function Detail({ icon, label, value }: { icon: ReactNode; label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <span className="mt-0.5 text-accent">{icon}</span>
+      <div className="min-w-0">
+        <dt className="text-xs text-muted">{label}</dt>
+        <dd className={cx('truncate', !value && 'text-muted')}>{value || 'Sin definir'}</dd>
+      </div>
+    </div>
+  );
+}
+
+/** Editar los datos: se guardan con "Guardar"; "Cancelar" cierra sin cambiar nada. */
+function EditLeagueModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { lid, league } = useLeagueCtx();
+  const run = useAction();
+  const [saving, setSaving] = useState(false);
+  // Se toma la foto de los datos al abrir: si alguien más los cambia, no se pisa lo que estás escribiendo.
+  const [initial, setInitial] = useState(() => leagueInput(league));
+  useEffect(() => {
+    if (open) setInitial(leagueInput(league));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={league.kind === 'torneo' ? 'Datos del torneo' : 'Datos de la liga'}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" type="submit" form="league-edit" loading={saving} icon={<Save className="size-4" />}>
+            Guardar
+          </Button>
+        </>
+      }
+    >
+      <LeagueForm
+        id="league-edit"
+        initial={initial}
+        onSubmit={async (data) => {
+          setSaving(true);
+          const ok = await run(async () => {
+            await updateLeague(lid, data);
+            return true;
+          }, 'Cambios guardados');
+          setSaving(false);
+          if (ok) onClose();
+        }}
+      />
+    </Modal>
+  );
+}
+
+/** Configuración: respaldo, liberar espacio de fotos y borrar la liga (dueño o superadmin). */
+function LeagueConfigModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { lid, league, isOwner } = useLeagueCtx();
   const { user, isSuper } = useAuth();
   const navigate = useNavigate();
   const run = useAction();
   const { confirm, toast } = useFeedback();
-  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const initial = useMemo(() => leagueInput(league), [league]);
+  const isTournament = league.kind === 'torneo';
 
   async function backup() {
     setBusy('backup');
@@ -185,47 +328,71 @@ function SettingsPanel() {
     }, 'Borrado');
     setBusy(null);
     if (done) {
+      onClose();
       rememberLeague(null);
       navigate('/ligas', { replace: true });
     }
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <Card className="flex flex-col gap-4 p-4">
-        <h2 className="text-lg font-bold tracking-tight">{league.kind === 'torneo' ? 'Datos del torneo' : 'Datos de la liga'}</h2>
-        <LeagueForm
-          id="league-settings"
-          initial={initial}
-          onSubmit={async (data) => {
-            setSaving(true);
-            await run(() => updateLeague(lid, data), 'Liga actualizada');
-            setSaving(false);
-          }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          <Settings className="size-5 text-accent" /> {isTournament ? 'Configuración del torneo' : 'Configuración de la liga'}
+        </span>
+      }
+      footer={<Button onClick={onClose}>Cerrar</Button>}
+    >
+      <div className="flex flex-col gap-3">
+        <ConfigRow
+          icon={<DatabaseBackup className="size-5" />}
+          title="Respaldo"
+          text="Descarga todos los datos (jugadores, eventos, juegos y miembros) en un archivo. Las fotos no entran."
+          action={
+            <Button size="sm" loading={busy === 'backup'} onClick={backup}>
+              Descargar
+            </Button>
+          }
         />
-        <Button variant="primary" type="submit" form="league-settings" loading={saving} icon={<Save className="size-4" />} className="self-end">
-          Guardar
-        </Button>
-      </Card>
-
-      <InviteCard league={league} />
-
-      <Card className="flex flex-col gap-3 p-4">
-        <h3 className="font-semibold">Mantenimiento</h3>
-        <div className="flex flex-wrap gap-2">
-          <Button icon={<DatabaseBackup className="size-4" />} loading={busy === 'backup'} onClick={backup}>
-            Descargar respaldo
-          </Button>
-          <Button icon={<ImageMinus className="size-4" />} loading={busy === 'photos'} onClick={freePhotos}>
-            Borrar fotos viejas
-          </Button>
-        </div>
+        <ConfigRow
+          icon={<ImageMinus className="size-5" />}
+          title="Fotos viejas"
+          text="Borra las fotos de hace más de un año para no llenar el espacio gratis. Los juegos siguen contando."
+          action={
+            <Button size="sm" loading={busy === 'photos'} onClick={freePhotos}>
+              Borrar
+            </Button>
+          }
+        />
         {(isOwner || isSuper) && (
-          <Button variant="ghost" className="self-start text-danger" icon={<Trash2 className="size-4" />} loading={busy === 'delete'} onClick={remove}>
-            {league.kind === 'torneo' ? 'Borrar el torneo' : 'Borrar la liga'}
-          </Button>
+          <ConfigRow
+            danger
+            icon={<Trash2 className="size-5" />}
+            title={isTournament ? 'Borrar el torneo' : 'Borrar la liga'}
+            text="Se borra todo y no se puede deshacer. Descarga el respaldo antes."
+            action={
+              <Button size="sm" variant="danger" loading={busy === 'delete'} onClick={remove}>
+                Borrar
+              </Button>
+            }
+          />
         )}
-      </Card>
+      </div>
+    </Modal>
+  );
+}
+
+function ConfigRow({ icon, title, text, action, danger }: { icon: ReactNode; title: string; text: string; action: ReactNode; danger?: boolean }) {
+  return (
+    <div className={cx('flex items-start gap-3 rounded-xl border p-3', danger ? 'border-danger/40 bg-danger-soft/40' : 'border-line')}>
+      <span className={cx('mt-0.5', danger ? 'text-danger' : 'text-accent')}>{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className={cx('text-sm font-semibold', danger && 'text-danger')}>{title}</p>
+        <p className="text-xs text-muted">{text}</p>
+      </div>
+      <div className="shrink-0 self-center">{action}</div>
     </div>
   );
 }
