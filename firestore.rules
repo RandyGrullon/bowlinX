@@ -1,26 +1,41 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Admins fijos (debe coincidir con src/lib/admins.ts) + cuentas con role 'admin' que nombre un admin.
-    function isFixedAdmin() {
-      return request.auth != null
-        && request.auth.token.email in ['admin@admin.com'];
-    }
     function signedIn() {
       return request.auth != null;
     }
-    function me() {
-      return /databases/$(database)/documents/users/$(request.auth.uid);
+    // Superadmins fijos (debe coincidir con src/lib/admins.ts) + cuentas con superadmin = true.
+    function isFixedSuper() {
+      return signedIn() && request.auth.token.email in ['admin@admin.com'];
     }
-    function isAdmin() {
-      return isFixedAdmin() || (signedIn() && exists(me()) && get(me()).data.role == 'admin');
+    function isSuper() {
+      return isFixedSuper()
+        || (signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('superadmin', false) == true);
     }
-    // Jugador vinculado a la cuenta que hace la petición (null si no tiene).
-    function myPlayerId() {
-      return signedIn() && exists(me()) ? get(me()).data.playerId : null;
+    function memberPath(lid) {
+      return /databases/$(database)/documents/members/$(lid + '_' + request.auth.uid);
     }
-    function docExists(col, id) {
-      return exists(/databases/$(database)/documents/$(col)/$(id));
+    function isMember(lid) {
+      return signedIn() && exists(memberPath(lid));
+    }
+    function role(lid) {
+      return get(memberPath(lid)).data.role;
+    }
+    // Dueño o admin de la liga (o superadmin): administra todo lo de esa liga.
+    function isLeagueAdmin(lid) {
+      return isSuper() || (isMember(lid) && role(lid) in ['owner', 'admin']);
+    }
+    // Jugador de la liga vinculado a la cuenta (null si no tiene).
+    function myPlayer(lid) {
+      return isMember(lid) ? get(memberPath(lid)).data.playerId : null;
+    }
+    function league(lid) {
+      return get(/databases/$(database)/documents/leagues/$(lid)).data;
+    }
+    // Liga pública: la ve cualquiera, sin login. Privada: solo sus miembros.
+    function canRead(lid) {
+      return league(lid).visibility == 'public' || isMember(lid) || isSuper();
     }
     function onlyChanged(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
@@ -28,107 +43,196 @@ service cloud.firestore {
     function validName(n) {
       return n is string && n.size() > 0 && n.size() <= 60;
     }
+    function shortText(s, max) {
+      return s is string && s.size() <= max;
+    }
+    function validLeague(d) {
+      return d.keys().hasOnly(['name', 'kind', 'visibility', 'ownerUid', 'venue', 'schedule', 'seasonStart', 'seasonEnd',
+                               'contactName', 'contactPhone', 'requirePhoto', 'createdAt'])
+        && validName(d.name)
+        && d.get('kind', 'liga') in ['liga', 'torneo']
+        && d.visibility in ['public', 'private']
+        && shortText(d.venue, 80) && shortText(d.schedule, 80)
+        && shortText(d.seasonStart, 10) && shortText(d.seasonEnd, 10)
+        && shortText(d.contactName, 60) && shortText(d.contactPhone, 20)
+        && d.requirePhoto is bool;
+    }
 
-    // Cuentas: cada quien lee la suya; el admin, todas.
+    // ---------- Cuentas ----------
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      // Registro: su propia cuenta, como jugador y sin vincular todavía.
+      allow read: if signedIn() && (request.auth.uid == uid || isSuper());
       allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['email', 'name', 'playerId', 'role', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['email', 'name', 'createdAt'])
         && request.resource.data.email == request.auth.token.email
         && validName(request.resource.data.name)
-        && request.resource.data.playerId == null
-        && request.resource.data.role == 'jugador'
         && request.resource.data.createdAt == request.time;
-      // Vincularse a un jugador, una sola vez y junto con marcar el jugador con su uid.
-      allow update: if isAdmin() || (
-        signedIn() && request.auth.uid == uid
-        && resource.data.playerId == null
-        && onlyChanged(['playerId'])
-        && request.resource.data.playerId is string
-        && getAfter(/databases/$(database)/documents/players/$(request.resource.data.playerId)).data.uid == uid
-      );
-      allow delete: if isAdmin();
+      allow update: if (isSuper() && onlyChanged(['superadmin']) && request.resource.data.superadmin is bool)
+        || (signedIn() && request.auth.uid == uid && onlyChanged(['name']) && validName(request.resource.data.name));
+      allow delete: if isSuper();
     }
 
-    // Todo lo del boliche se lee sin login: la página de cada jugador se comparte por link.
-    match /players/{id} {
-      allow read: if true;
-      allow delete: if isAdmin();
-      // "No estoy en la lista": el jugador crea su propio perfil ya vinculado.
-      allow create: if isAdmin() || (
-        signedIn() && myPlayerId() == null
-        && request.resource.data.keys().hasOnly(['name', 'averageOverride', 'uid', 'createdAt'])
+    // ---------- Ligas ----------
+    match /leagues/{lid} {
+      allow get: if resource.data.visibility == 'public' || isMember(lid) || isSuper();
+      allow list: if resource.data.visibility == 'public' || isSuper();
+      // Cualquiera con cuenta crea su liga y queda como dueño (en el mismo lote).
+      allow create: if signedIn()
+        && validLeague(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && getAfter(memberPath(lid)).data.role == 'owner';
+      allow update: if isLeagueAdmin(lid)
+        && validLeague(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isSuper() || (isMember(lid) && role(lid) == 'owner');
+
+      // Código de invitación vigente: solo lo ven los admins de la liga.
+      match /private/{doc} {
+        allow read, write: if isLeagueAdmin(lid);
+      }
+
+      match /players/{pid} {
+        allow read: if canRead(lid);
+        allow delete: if isLeagueAdmin(lid);
+        // "No estoy en la lista": el miembro crea su propio jugador ya vinculado.
+        allow create: if isLeagueAdmin(lid) || (
+          isMember(lid) && myPlayer(lid) == null
+          && request.resource.data.keys().hasOnly(['name', 'averageOverride', 'uid', 'createdAt'])
+          && validName(request.resource.data.name)
+          && request.resource.data.averageOverride == null
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && getAfter(memberPath(lid)).data.playerId == pid
+        );
+        allow update: if isLeagueAdmin(lid)
+          // Reclamar un jugador sin cuenta (junto con marcarlo en su membresía).
+          || (isMember(lid) && myPlayer(lid) == null
+              && resource.data.get('uid', null) == null
+              && onlyChanged(['uid'])
+              && request.resource.data.uid == request.auth.uid
+              && getAfter(memberPath(lid)).data.playerId == pid)
+          // Soltar su propio jugador (al salir de la liga).
+          || (signedIn() && resource.data.get('uid', null) == request.auth.uid
+              && onlyChanged(['uid'])
+              && request.resource.data.uid == null);
+      }
+
+      match /events/{eid} {
+        allow read: if canRead(lid);
+        allow create, delete: if isLeagueAdmin(lid);
+        // Asistencia: un miembro con jugador marca o quita solo su propio "voy".
+        allow update: if isLeagueAdmin(lid) || (
+          myPlayer(lid) != null
+          && onlyChanged(['rsvp'])
+          && request.resource.data.get('rsvp', {}).diff(resource.data.get('rsvp', {})).affectedKeys().hasOnly([myPlayer(lid)])
+          && request.resource.data.get('rsvp', {}).get(myPlayer(lid), true) == true
+        );
+      }
+
+      match /entries/{id} {
+        allow read: if canRead(lid);
+        allow write: if isLeagueAdmin(lid);
+      }
+
+      // Fotos de los marcadores (comprimidas). Las sube un admin o un miembro con jugador.
+      match /photos/{id} {
+        allow read: if canRead(lid);
+        allow create: if isLeagueAdmin(lid) || (
+          myPlayer(lid) != null
+          && request.resource.data.keys().hasOnly(['data', 'width', 'height', 'eventId', 'createdAt'])
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 750000
+          && request.resource.data.data.matches('^data:image/jpeg;base64,.*')
+          && (request.resource.data.eventId == null || exists(/databases/$(database)/documents/leagues/$(lid)/events/$(request.resource.data.eventId)))
+          && request.resource.data.createdAt == request.time
+        );
+        allow update, delete: if isLeagueAdmin(lid);
+      }
+
+      // Juegos que un miembro sube de SU jugador: quedan pendientes hasta que un admin los apruebe.
+      // Van a un evento existente o a una fecha (se ponen en la práctica de ese día).
+      match /submissions/{id} {
+        allow read: if canRead(lid);
+        allow create: if isLeagueAdmin(lid) || (
+          myPlayer(lid) != null
+          && request.resource.data.playerId == myPlayer(lid)
+          && request.resource.data.keys().hasOnly(['playerId', 'eventId', 'date', 'scores', 'scanned', 'frames', 'photoId', 'status', 'note', 'createdAt'])
+          && request.resource.data.status == 'pendiente'
+          && request.resource.data.note == null
+          && request.resource.data.scores is list
+          && request.resource.data.scores.size() > 0
+          && request.resource.data.scores.size() <= 10
+          && (request.resource.data.scanned == null
+              || (request.resource.data.scanned is list && request.resource.data.scanned.size() <= 10))
+          && (request.resource.data.get('frames', null) == null || request.resource.data.frames is map)
+          && ((request.resource.data.eventId is string
+                && exists(/databases/$(database)/documents/leagues/$(lid)/events/$(request.resource.data.eventId))
+                && request.resource.data.get('date', null) == null)
+              || (request.resource.data.eventId == null
+                && request.resource.data.get('date', null) is string
+                && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
+          // Con foto, o sin foto solo si la liga no la exige.
+          && ((request.resource.data.photoId is string
+                && existsAfter(/databases/$(database)/documents/leagues/$(lid)/photos/$(request.resource.data.photoId)))
+              || (request.resource.data.photoId == null && league(lid).requirePhoto == false))
+          && request.resource.data.createdAt == request.time
+        );
+        allow update, delete: if isLeagueAdmin(lid);
+      }
+    }
+
+    // ---------- Membresías: members/{liga}_{uid} ----------
+    match /members/{id} {
+      allow get: if signedIn() && (resource == null || resource.data.uid == request.auth.uid
+                                   || isMember(resource.data.leagueId) || isSuper());
+      allow list: if signedIn() && (resource.data.uid == request.auth.uid
+                                    || isMember(resource.data.leagueId) || isSuper());
+      allow create: if signedIn()
+        && id == request.resource.data.leagueId + '_' + request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['leagueId', 'uid', 'name', 'role', 'playerId', 'joinedAt', 'code'])
         && validName(request.resource.data.name)
-        && request.resource.data.averageOverride == null
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && getAfter(me()).data.playerId == id
-      );
-      // Reclamar un jugador que todavía no tiene cuenta.
-      allow update: if isAdmin() || (
-        signedIn() && myPlayerId() == null
-        && resource.data.get('uid', null) == null
-        && onlyChanged(['uid'])
-        && request.resource.data.uid == request.auth.uid
-        && getAfter(me()).data.playerId == id
-      );
-    }
-    match /events/{id} {
-      allow read: if true;
-      allow create, delete: if isAdmin();
-      // Asistencia a la práctica: un jugador con cuenta marca o quita solo su propio "voy".
-      allow update: if isAdmin() || (
-        myPlayerId() != null
-        && onlyChanged(['rsvp'])
-        && request.resource.data.get('rsvp', {}).diff(resource.data.get('rsvp', {})).affectedKeys().hasOnly([myPlayerId()])
-        && request.resource.data.get('rsvp', {}).get(myPlayerId(), true) == true
-      );
-    }
-    match /entries/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    // Fotos de los marcadores (comprimidas). Las sube el admin o un jugador con cuenta vinculada.
-    match /photos/{id} {
-      allow read: if true;
-      allow create: if isAdmin() || (
-        myPlayerId() != null
-        && request.resource.data.keys().hasOnly(['data', 'width', 'height', 'eventId', 'createdAt'])
-        && request.resource.data.data is string
-        && request.resource.data.data.size() < 750000
-        && request.resource.data.data.matches('^data:image/jpeg;base64,.*')
-        && (request.resource.data.eventId == null || docExists('events', request.resource.data.eventId))
-        && request.resource.data.createdAt == request.time
-      );
-      allow update, delete: if isAdmin();
+        && request.resource.data.playerId == null
+        && request.resource.data.joinedAt == request.time
+        && (
+          // Dueño: solo al crear la liga (en el mismo lote).
+          (request.resource.data.role == 'owner'
+            && !exists(/databases/$(database)/documents/leagues/$(request.resource.data.leagueId))
+            && getAfter(/databases/$(database)/documents/leagues/$(request.resource.data.leagueId)).data.ownerUid == request.auth.uid)
+          // Miembro: liga pública, o privada con un código de invitación válido.
+          || (request.resource.data.role == 'member'
+            && (league(request.resource.data.leagueId).visibility == 'public'
+                || (request.resource.data.get('code', null) is string
+                    && get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.leagueId == request.resource.data.leagueId)))
+        );
+      allow update: if
+        // Admins de la liga: roles (nunca el del dueño) y desvincular/vincular jugador.
+        (isLeagueAdmin(resource.data.leagueId)
+          && onlyChanged(['role', 'playerId'])
+          && (request.resource.data.role == resource.data.role
+              || (resource.data.role != 'owner' && request.resource.data.role in ['admin', 'member'])))
+        // El miembro se vincula con su jugador una sola vez (junto con marcar el jugador).
+        || (signedIn() && resource.data.uid == request.auth.uid
+            && resource.data.playerId == null
+            && onlyChanged(['playerId'])
+            && request.resource.data.playerId is string
+            && getAfter(/databases/$(database)/documents/leagues/$(resource.data.leagueId)/players/$(request.resource.data.playerId)).data.uid == request.auth.uid);
+      // Salir de la liga (el dueño no), o que un admin saque a alguien.
+      allow delete: if (signedIn() && resource.data.uid == request.auth.uid && resource.data.role != 'owner')
+        || (isLeagueAdmin(resource.data.leagueId) && resource.data.role != 'owner')
+        || isSuper()
+        || (isMember(resource.data.leagueId) && role(resource.data.leagueId) == 'owner');
     }
 
-    // Juegos que un jugador sube de SU perfil: quedan pendientes hasta que el admin los apruebe.
-    // Van a un evento existente o, si no hay evento, a una fecha (el admin los pone en la práctica de ese día).
-    match /submissions/{id} {
-      allow read: if true;
-      allow create: if isAdmin() || (
-        myPlayerId() != null
-        && request.resource.data.playerId == myPlayerId()
-        && request.resource.data.keys().hasOnly(['playerId', 'eventId', 'date', 'scores', 'scanned', 'photoId', 'status', 'note', 'createdAt'])
-        && request.resource.data.status == 'pendiente'
-        && request.resource.data.note == null
-        && request.resource.data.scores is list
-        && request.resource.data.scores.size() > 0
-        && request.resource.data.scores.size() <= 10
-        && (request.resource.data.scanned == null
-            || (request.resource.data.scanned is list && request.resource.data.scanned.size() <= 10))
-        && ((request.resource.data.eventId is string && docExists('events', request.resource.data.eventId)
-              && request.resource.data.get('date', null) == null)
-            || (request.resource.data.eventId == null
-              && request.resource.data.get('date', null) is string
-              && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')))
-        && existsAfter(/databases/$(database)/documents/photos/$(request.resource.data.photoId))
-        && request.resource.data.createdAt == request.time
-      );
-      allow update, delete: if isAdmin();
+    // ---------- Invitaciones: invites/{código} ----------
+    match /invites/{code} {
+      // Con el código (link o QR) se ve a qué liga invita; no se pueden listar.
+      allow get: if true;
+      allow create: if isLeagueAdmin(request.resource.data.leagueId)
+        && request.resource.data.keys().hasOnly(['leagueId', 'leagueName', 'createdAt'])
+        && getAfter(/databases/$(database)/documents/leagues/$(request.resource.data.leagueId)/private/invite).data.code == code;
+      allow update: if isLeagueAdmin(resource.data.leagueId) && onlyChanged(['leagueName']);
+      allow delete: if isLeagueAdmin(resource.data.leagueId);
     }
   }
 }

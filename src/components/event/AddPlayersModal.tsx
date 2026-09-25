@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { addEntries, createPlayer, fetchEffectiveAverages } from '../../lib/data';
+import { useLeagueCtx } from '../../lib/league';
 import type { BowlingEvent, Entry, Player } from '../../lib/types';
 import { useAction } from '../feedback';
 import { Button, Input, Modal, cx } from '../ui';
@@ -19,15 +20,19 @@ export function AddPlayersModal({
   entries: Entry[];
   players: Player[];
 }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const search = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
       setQ('');
       setPicked(new Set());
+      // El diálogo enfoca la X al abrirse: se pasa al buscador para escribir de una.
+      setTimeout(() => search.current?.focus(), 50);
     }
   }, [open]);
 
@@ -44,7 +49,7 @@ export function AddPlayersModal({
     });
 
   async function createAndPick() {
-    const id = await run(() => createPlayer(q, null), 'Jugador creado');
+    const id = await run(() => createPlayer(lid, q, null), 'Jugador creado');
     if (id) {
       setPicked((s) => new Set(s).add(id));
       setQ('');
@@ -55,8 +60,8 @@ export function AddPlayersModal({
     setBusy(true);
     const chosen = players.filter((p) => picked.has(p.id));
     await run(async () => {
-      const averages = await fetchEffectiveAverages(chosen);
-      await addEntries(event, chosen.map((p) => ({ id: p.id, average: averages.get(p.id) ?? 0 })));
+      const averages = await fetchEffectiveAverages(lid, chosen);
+      await addEntries(lid, event, chosen.map((p) => ({ id: p.id, average: averages.get(p.id) ?? 0 })));
     }, `${chosen.length} inscrito${chosen.length === 1 ? '' : 's'}`);
     setBusy(false);
     onClose();
@@ -79,7 +84,7 @@ export function AddPlayersModal({
       <div className="flex flex-col gap-3">
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-          <Input autoFocus placeholder="Buscar o escribir un nombre nuevo" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
+          <Input ref={search} placeholder="Buscar o escribir un nombre nuevo" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
         </div>
         {q.trim() && !exact && (
           <Button variant="secondary" icon={<Plus className="size-4" />} onClick={createAndPick} className="justify-start">
@@ -98,7 +103,11 @@ export function AddPlayersModal({
           ))}
           {filtered.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-muted">
-              {available.length === 0 ? 'Todos los jugadores ya están en este evento.' : 'Nadie coincide.'}
+              {players.length === 0
+                ? 'Todavía no hay jugadores: escribe un nombre arriba para crearlo.'
+                : available.length === 0
+                  ? 'Todos los jugadores ya están en este evento.'
+                  : 'Nadie coincide.'}
             </p>
           )}
         </div>

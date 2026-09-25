@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { CalendarCheck, Camera, CheckCircle2, ScanLine, UserPlus, Users, X } from 'lucide-react';
-import { addEntries, fetchEffectiveAverages, removeEntry, updateEntry } from '../../lib/data';
+import { CalendarCheck, Camera, CheckCircle2, Grid3x3, ScanLine, UserPlus, Users, X } from 'lucide-react';
+import { addEntries, fetchEffectiveAverages, removeEntry, saveGame, updateEntry } from '../../lib/data';
+import { useLeagueCtx } from '../../lib/league';
 import { entryLine, slots, type Line } from '../../lib/stats';
-import type { BowlingEvent, Entry, Player } from '../../lib/types';
+import { NO_PHOTO, type BowlingEvent, type Entry, type Player } from '../../lib/types';
 import { useAction, useFeedback } from '../feedback';
 import { PhotoModal } from '../PhotoModal';
 import { ScanModal } from '../ScanModal';
 import { ScoreInput } from '../ScoreInput';
-import { Badge, Button, Card, Empty } from '../ui';
+import { ScoreEntryModal } from '../frames/ScoreEntryModal';
+import { Badge, Button, Card, Empty, cx } from '../ui';
 import { AddPlayersModal } from './AddPlayersModal';
 
 interface Group {
@@ -16,13 +18,16 @@ interface Group {
   lines: Line[];
 }
 
-/** Anotar pinos por juego. Sin foto = borrador; con foto = verificado. */
+/** Anotar pinos por juego (a mano, por cuadros o con la foto). Sin foto = borrador si la liga la exige. */
 export function GamesTab({ event, entries, players }: { event: BowlingEvent; entries: Entry[]; players: Player[] }) {
+  const { lid, league } = useLeagueCtx();
+  const requirePhoto = league.requirePhoto !== false;
   const run = useAction();
   const { confirm } = useFeedback();
   const [scanFor, setScanFor] = useState<string | null | undefined>(undefined);
   const [adding, setAdding] = useState(false);
   const [photo, setPhoto] = useState<{ entry: Entry; game: number; photoId: string } | null>(null);
+  const [framesFor, setFramesFor] = useState<{ entryId: string; game: number } | null>(null);
   const byId = new Map(players.map((p) => [p.id, p]));
   const nameOf = (e: Entry) => byId.get(e.playerId)?.name ?? '(jugador borrado)';
   const isTorneo = event.type === 'torneo';
@@ -39,8 +44,8 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
     setAddingConfirmed(true);
     const chosen = missing.map((id) => byId.get(id)!);
     await run(async () => {
-      const avgs = await fetchEffectiveAverages(chosen);
-      await addEntries(event, chosen.map((p) => ({ id: p.id, average: avgs.get(p.id) ?? 0 })));
+      const avgs = await fetchEffectiveAverages(lid, chosen);
+      await addEntries(lid, event, chosen.map((p) => ({ id: p.id, average: avgs.get(p.id) ?? 0 })));
     }, `${chosen.length} agregados`);
     setAddingConfirmed(false);
   }
@@ -55,32 +60,34 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
     : [{ key: '_all', title: null, lines }];
 
   function setScore(entry: Entry, game: number, value: number | null) {
-    const scores = slots(entry.scores, event.games, null);
-    const photos = slots(entry.photos, event.games, null);
-    scores[game] = value;
-    photos[game] = null;
-    run(() => updateEntry(entry.id, { scores, photos }));
+    run(() => saveGame(lid, event, entry, game, { score: value, frames: null }, requirePhoto));
   }
 
   async function unverify() {
     if (!photo) return;
     const ok = await confirm({
       title: 'Quitar verificación',
-      message: 'El juego vuelve a borrador y deja de contar hasta que se verifique con otra foto.',
+      message: requirePhoto
+        ? 'El juego vuelve a borrador y deja de contar hasta que se verifique con otra foto.'
+        : 'Se quita la foto; el juego sigue contando como anotado sin foto.',
       confirmText: 'Quitar',
       danger: true,
     });
     if (!ok) return;
     const photos = slots(photo.entry.photos, event.games, null);
-    photos[photo.game] = null;
+    photos[photo.game] = requirePhoto ? null : NO_PHOTO;
     setPhoto(null);
-    await run(() => updateEntry(photo.entry.id, { photos }));
+    await run(() => updateEntry(lid, photo.entry.id, { photos }));
   }
 
   async function remove(entry: Entry) {
     const ok = await confirm({ title: `¿Quitar a ${nameOf(entry)}?`, message: 'Se borran sus juegos de esta práctica.', confirmText: 'Quitar', danger: true });
-    if (ok) await run(() => removeEntry(entry));
+    if (ok) await run(() => removeEntry(lid, entry));
   }
+
+  const framesEntry = framesFor ? entries.find((e) => e.id === framesFor.entryId) : undefined;
+  const framesGame = framesFor?.game ?? 0;
+  const framesVerified = framesEntry ? isRealPhoto(slots(framesEntry.photos, event.games, null)[framesGame]) : false;
 
   const cols = `repeat(${event.games}, minmax(3.25rem, 1fr))`;
   let row = 0;
@@ -106,14 +113,14 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" icon={<ScanLine className="size-4" />} onClick={() => setScanFor(null)} disabled={!players.length}>
-          Verificar con foto
+          {requirePhoto ? 'Verificar con foto' : 'Leer foto'}
         </Button>
         {!isTorneo && (
           <Button icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)}>
             Agregar asistentes
           </Button>
         )}
-        {pending > 0 && (
+        {requirePhoto && pending > 0 && (
           <Badge tone="warn" className="ml-auto">
             <Camera className="size-3" /> {pending} {pending === 1 ? 'juego sin foto' : 'juegos sin foto'}
           </Badge>
@@ -122,7 +129,7 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
 
       {entries.length === 0 ? (
         <Empty icon={<Users className="size-8" />} title={isTorneo ? 'Nadie inscrito' : 'Sin asistentes'}>
-          {isTorneo ? 'Inscribe jugadores en la pestaña Inscritos.' : 'Agrega quién vino a practicar, o verifica una foto y se agregan solos.'}
+          {isTorneo ? 'Inscribe jugadores en la pestaña Inscritos.' : 'Agrega quién vino a practicar, o lee una foto y se agregan solos.'}
         </Empty>
       ) : (
         groups.map((g) => {
@@ -149,13 +156,14 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
                   ))}
                 </div>
                 <span className="w-14 text-right">Total</span>
-                <span className="w-8" />
+                <span className="w-16" />
               </div>
               <div className="divide-y divide-line">
                 {g.lines.map((l) => {
                   const r = row++;
                   const name = nameOf(l.entry);
                   const photos = slots(l.entry.photos, event.games, null);
+                  const firstOpen = Math.max(0, l.scores.findIndex((s) => s == null));
                   return (
                     <div key={l.entry.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:flex-nowrap">
                       <div className="flex w-full min-w-0 items-center gap-2 sm:w-44 sm:shrink-0">
@@ -173,7 +181,8 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
                             key={i}
                             label={`${name} juego ${i + 1}`}
                             value={s}
-                            verified={l.verified[i]}
+                            verified={isRealPhoto(photos[i])}
+                            counted={photos[i] === NO_PHOTO}
                             row={r}
                             col={i}
                             onCommit={(v) => setScore(l.entry, i, v)}
@@ -183,16 +192,24 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
                       </div>
                       <span className="w-14 text-right font-semibold tabular-nums">
                         {l.total || '—'}
-                        {l.pending > 0 && <span className="block text-[10px] font-normal text-warn">vista previa</span>}
+                        {requirePhoto && l.pending > 0 && <span className="block text-[10px] font-normal text-warn">vista previa</span>}
                       </span>
-                      <div className="flex w-8 justify-end">
+                      <div className="flex w-16 justify-end">
                         <Button
                           variant="ghost"
                           size="sm"
-                          title="Verificar con foto"
+                          title="Anotar por cuadros"
+                          aria-label={`Anotar juegos de ${name} por cuadros`}
+                          onClick={() => setFramesFor({ entryId: l.entry.id, game: firstOpen })}
+                          icon={<Grid3x3 className={cx('size-4', l.entry.frames && Object.keys(l.entry.frames).length ? 'text-accent' : 'text-muted')} />}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title={requirePhoto ? 'Verificar con foto' : 'Leer foto'}
                           aria-label={`Verificar juegos de ${name} con foto`}
                           onClick={() => setScanFor(l.entry.playerId)}
-                          icon={l.pending > 0 ? <Camera className="size-4 text-warn" /> : <CheckCircle2 className="size-4 text-muted" />}
+                          icon={requirePhoto && l.pending > 0 ? <Camera className="size-4 text-warn" /> : <CheckCircle2 className="size-4 text-muted" />}
                         />
                       </div>
                       {!isTorneo && (
@@ -210,11 +227,20 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
       )}
 
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+        {requirePhoto ? (
+          <>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block size-3 rounded border border-dashed border-warn" /> Borrador sin foto: no cuenta
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <CheckCircle2 className="size-3 text-ok" /> Verificado con foto
+            </span>
+          </>
+        ) : (
+          <span>Esta liga no exige foto: lo que anotas cuenta de una.</span>
+        )}
         <span className="inline-flex items-center gap-1">
-          <span className="inline-block size-3 rounded border border-dashed border-warn" /> Borrador sin foto: no cuenta
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <CheckCircle2 className="size-3 text-ok" /> Verificado con foto
+          <Grid3x3 className="size-3" /> Anotar por cuadros
         </span>
         <span>Enter baja al siguiente jugador.</span>
       </p>
@@ -238,6 +264,53 @@ export function GamesTab({ event, entries, players }: { event: BowlingEvent; ent
           </Button>
         }
       />
+      {framesEntry && (
+        <ScoreEntryModal
+          open
+          onClose={() => setFramesFor(null)}
+          title={`${nameOf(framesEntry)} · Juego ${framesGame + 1}`}
+          resetKey={`${framesEntry.id}-${framesGame}`}
+          initial={{ score: slots(framesEntry.scores, event.games, null)[framesGame], frames: framesEntry.frames?.[framesGame] ?? null }}
+          top={
+            event.games > 1 && (
+              <div className="flex gap-1.5">
+                {Array.from({ length: event.games }, (_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setFramesFor({ entryId: framesEntry.id, game: i })}
+                    className={cx(
+                      'h-9 flex-1 rounded-lg text-sm font-semibold transition',
+                      i === framesGame ? 'bg-accent text-accent-fg' : 'bg-surface-2 text-muted hover:text-fg',
+                    )}
+                  >
+                    J{i + 1}
+                  </button>
+                ))}
+              </div>
+            )
+          }
+          note={
+            framesVerified && requirePhoto ? (
+              <p className="rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">Este juego ya está verificado con foto: si lo cambias vuelve a borrador.</p>
+            ) : null
+          }
+          onSave={async (v) => {
+            const ok = await run(async () => {
+              await saveGame(lid, event, framesEntry, framesGame, v, requirePhoto);
+              return true;
+            }, `Juego ${framesGame + 1} guardado`);
+            if (ok) {
+              // Sigue con el próximo juego sin anotar, o cierra.
+              const next = slots(framesEntry.scores, event.games, null).findIndex((s, i) => i !== framesGame && s == null);
+              setFramesFor(next >= 0 ? { entryId: framesEntry.id, game: next } : null);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
+
+/** Foto real (no la marca de "sin foto"). */
+export const isRealPhoto = (p: string | null | undefined) => p != null && p !== NO_PHOTO;

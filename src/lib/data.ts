@@ -3,6 +3,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   getDocs,
   increment,
   onSnapshot,
@@ -10,6 +11,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
@@ -18,8 +20,35 @@ import {
   type WriteBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { playerStats, slots } from './stats';
-import type { BowlingEvent, Entry, EventType, Photo, Player, RankBy, Role, Submission, UserProfile } from './types';
+import { scoreGame } from './bowling';
+import { DEFAULT_CUTS, playerStats, slots } from './stats';
+import type {
+  BowlingEvent,
+  Entry,
+  EventType,
+  GameFrames,
+  Invite,
+  League,
+  LeagueKind,
+  LeagueRole,
+  Member,
+  Photo,
+  Player,
+  RankBy,
+  Submission,
+  UserProfile,
+  Visibility,
+} from './types';
+import { NO_PHOTO } from './types';
+
+// ---------- Rutas: todo lo del boliche vive dentro de una liga ----------
+
+type LeagueCol = 'players' | 'events' | 'entries' | 'submissions' | 'photos';
+const col = (lid: string, name: LeagueCol) => collection(db, 'leagues', lid, name);
+const ref = (lid: string, name: LeagueCol, id: string) => doc(db, 'leagues', lid, name, id);
+const newId = (lid: string, name: LeagueCol) => doc(col(lid, name)).id;
+export const memberId = (lid: string, uid: string) => `${lid}_${uid}`;
+export const entryId = (eventId: string, playerId: string) => `${eventId}_${playerId}`;
 
 // ---------- Lecturas en vivo (onSnapshot = la pantalla se actualiza sola) ----------
 
@@ -74,35 +103,97 @@ function useLiveDoc<T>(path: string | null): Live<T | null> {
   return state;
 }
 
-export const usePlayers = () =>
-  useLiveQuery<Player>('players', () => query(collection(db, 'players'), orderBy('name')));
+// Ligas y cuentas
+export const useLeague = (lid: string | undefined) => useLiveDoc<League>(lid ? `leagues/${lid}` : null);
 
-export const usePlayer = (id: string | undefined) => useLiveDoc<Player>(id ? `players/${id}` : null);
+export const usePublicLeagues = () =>
+  useLiveQuery<League>('leagues:public', () => query(collection(db, 'leagues'), where('visibility', '==', 'public')));
 
-export const useEvents = () =>
-  useLiveQuery<BowlingEvent>('events', () => query(collection(db, 'events'), orderBy('date', 'desc')));
+/** Todas las ligas (solo el superadmin puede listarlas). */
+export const useAllLeagues = (enabled: boolean) =>
+  useLiveQuery<League>(enabled ? 'leagues:all' : null, () => collection(db, 'leagues'));
 
-export const useEvent = (id: string | undefined) => useLiveDoc<BowlingEvent>(id ? `events/${id}` : null);
+/** Varias ligas por id (las de mis membresías), en vivo. Las que no existen o no se pueden ver se omiten. */
+export function useLeaguesByIds(ids: string[]): Live<League[]> {
+  const key = [...ids].sort().join(',');
+  const [state, setState] = useState<Live<League[]>>({ data: [], loading: ids.length > 0, error: null });
+  useEffect(() => {
+    const list = key ? key.split(',') : [];
+    if (!list.length) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    const found = new Map<string, League | null>();
+    const publish = () =>
+      setState({
+        data: list.map((id) => found.get(id)).filter((l): l is League => !!l).sort((a, b) => a.name.localeCompare(b.name)),
+        loading: found.size < list.length,
+        error: null,
+      });
+    const unsubs = list.map((id) =>
+      onSnapshot(
+        doc(db, 'leagues', id),
+        (snap) => {
+          found.set(id, snap.exists() ? ({ id: snap.id, ...snap.data() } as League) : null);
+          publish();
+        },
+        () => {
+          found.set(id, null);
+          publish();
+        },
+      ),
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [key]);
+  return state;
+}
 
-export const useAllEntries = () => useLiveQuery<Entry>('entries', () => collection(db, 'entries'));
+export const useMembership = (lid: string | undefined, uid: string | undefined) =>
+  useLiveDoc<Member>(lid && uid ? `members/${memberId(lid, uid)}` : null);
 
-export const useEventEntries = (eventId: string | undefined) =>
-  useLiveQuery<Entry>(eventId ? `entries:e:${eventId}` : null, () =>
-    query(collection(db, 'entries'), where('eventId', '==', eventId)),
+export const useMyMemberships = (uid: string | undefined) =>
+  useLiveQuery<Member>(uid ? `members:u:${uid}` : null, () => query(collection(db, 'members'), where('uid', '==', uid)));
+
+export const useLeagueMembers = (lid: string | undefined) =>
+  useLiveQuery<Member>(lid ? `members:l:${lid}` : null, () => query(collection(db, 'members'), where('leagueId', '==', lid)));
+
+/** Cuentas registradas (solo el superadmin puede leerlas todas). */
+export const useUsers = (enabled: boolean) => useLiveQuery<UserProfile>(enabled ? 'users' : null, () => collection(db, 'users'));
+
+// Contenido de una liga
+export const usePlayers = (lid: string | undefined) =>
+  useLiveQuery<Player>(lid ? `players:${lid}` : null, () => query(col(lid!, 'players'), orderBy('name')));
+
+export const usePlayer = (lid: string | undefined, id: string | undefined) =>
+  useLiveDoc<Player>(lid && id ? `leagues/${lid}/players/${id}` : null);
+
+export const useEvents = (lid: string | undefined) =>
+  useLiveQuery<BowlingEvent>(lid ? `events:${lid}` : null, () => query(col(lid!, 'events'), orderBy('date', 'desc')));
+
+export const useEvent = (lid: string | undefined, id: string | undefined) =>
+  useLiveDoc<BowlingEvent>(lid && id ? `leagues/${lid}/events/${id}` : null);
+
+export const useAllEntries = (lid: string | undefined) =>
+  useLiveQuery<Entry>(lid ? `entries:${lid}` : null, () => col(lid!, 'entries'));
+
+export const useEventEntries = (lid: string | undefined, eventId: string | undefined) =>
+  useLiveQuery<Entry>(lid && eventId ? `entries:${lid}:e:${eventId}` : null, () =>
+    query(col(lid!, 'entries'), where('eventId', '==', eventId)),
   );
 
-export const usePlayerEntries = (playerId: string | undefined) =>
-  useLiveQuery<Entry>(playerId ? `entries:p:${playerId}` : null, () =>
-    query(collection(db, 'entries'), where('playerId', '==', playerId)),
+export const usePlayerEntries = (lid: string | undefined, playerId: string | undefined) =>
+  useLiveQuery<Entry>(lid && playerId ? `entries:${lid}:p:${playerId}` : null, () =>
+    query(col(lid!, 'entries'), where('playerId', '==', playerId)),
   );
 
-/** Participaciones de varios eventos a la vez (para la posición del jugador en cada torneo). */
-export function useEntriesOfEvents(eventIds: string[]): Live<Entry[]> {
-  const key = [...eventIds].sort().join(',');
+/** Participaciones de varios eventos a la vez (posición en cada torneo, ranking de la temporada). */
+export function useEntriesOfEvents(lid: string | undefined, eventIds: string[]): Live<Entry[]> {
+  const key = lid ? `${lid}:${[...eventIds].sort().join(',')}` : '';
   const [state, setState] = useState<Live<Entry[]>>({ data: [], loading: eventIds.length > 0, error: null });
   useEffect(() => {
-    const ids = key ? key.split(',') : [];
-    if (!ids.length) {
+    const [league, list] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+    const ids = list ? list.split(',') : [];
+    if (!league || !ids.length) {
       setState({ data: [], loading: false, error: null });
       return;
     }
@@ -111,7 +202,7 @@ export function useEntriesOfEvents(eventIds: string[]): Live<Entry[]> {
     const parts = new Map<number, Entry[]>();
     const unsubs = chunks.map((chunk, i) =>
       onSnapshot(
-        query(collection(db, 'entries'), where('eventId', 'in', chunk)),
+        query(col(league, 'entries'), where('eventId', 'in', chunk)),
         (snap) => {
           parts.set(i, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry));
           setState({ data: [...parts.values()].flat(), loading: parts.size < chunks.length, error: null });
@@ -124,25 +215,19 @@ export function useEntriesOfEvents(eventIds: string[]): Live<Entry[]> {
   return state;
 }
 
-export const useSubmissions = (status: Submission['status'] | null = 'pendiente') =>
-  useLiveQuery<Submission>(`subs:${status}`, () =>
-    status
-      ? query(collection(db, 'submissions'), where('status', '==', status))
-      : collection(db, 'submissions'),
+export const useSubmissions = (lid: string | undefined, status: Submission['status'] = 'pendiente') =>
+  useLiveQuery<Submission>(lid ? `subs:${lid}:${status}` : null, () => query(col(lid!, 'submissions'), where('status', '==', status)));
+
+export const usePlayerSubmissions = (lid: string | undefined, playerId: string | undefined) =>
+  useLiveQuery<Submission>(lid && playerId ? `subs:${lid}:p:${playerId}` : null, () =>
+    query(col(lid!, 'submissions'), where('playerId', '==', playerId)),
   );
 
-export const usePlayerSubmissions = (playerId: string | undefined) =>
-  useLiveQuery<Submission>(playerId ? `subs:p:${playerId}` : null, () =>
-    query(collection(db, 'submissions'), where('playerId', '==', playerId)),
-  );
+export const usePhoto = (lid: string | undefined, id: string | null | undefined) =>
+  useLiveDoc<Photo>(lid && id ? `leagues/${lid}/photos/${id}` : null);
 
-export const usePhoto = (id: string | null | undefined) => useLiveDoc<Photo>(id ? `photos/${id}` : null);
-
-/** Cuentas registradas (solo el admin puede leerlas todas). */
-export const useUsers = (enabled: boolean) => useLiveQuery<UserProfile>(enabled ? 'users' : null, () => collection(db, 'users'));
-
-/** Promedio que tiene hoy cada jugador (fijo o calculado con sus juegos verificados). */
-export async function fetchEffectiveAverages(players: Pick<Player, 'id' | 'averageOverride'>[]) {
+/** Promedio que tiene hoy cada jugador en la liga (fijo o calculado con sus juegos verificados). */
+export async function fetchEffectiveAverages(lid: string, players: Pick<Player, 'id' | 'averageOverride'>[]) {
   const result = new Map<string, number>();
   const need = players.filter((p) => {
     if (p.averageOverride != null) result.set(p.id, p.averageOverride);
@@ -150,7 +235,7 @@ export async function fetchEffectiveAverages(players: Pick<Player, 'id' | 'avera
   });
   for (let i = 0; i < need.length; i += 30) {
     const chunk = need.slice(i, i + 30);
-    const snap = await getDocs(query(collection(db, 'entries'), where('playerId', 'in', chunk.map((p) => p.id))));
+    const snap = await getDocs(query(col(lid, 'entries'), where('playerId', 'in', chunk.map((p) => p.id))));
     const entries = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry);
     for (const p of chunk) {
       result.set(p.id, playerStats(entries.filter((e) => e.playerId === p.id)).autoAverage ?? 0);
@@ -158,12 +243,6 @@ export async function fetchEffectiveAverages(players: Pick<Player, 'id' | 'avera
   }
   return result;
 }
-
-// ---------- Escrituras (solo admin, salvo enviar juegos) ----------
-
-export const entryId = (eventId: string, playerId: string) => `${eventId}_${playerId}`;
-
-const newId = (col: string) => doc(collection(db, col)).id;
 
 async function commitInChunks(ops: ((b: WriteBatch) => void)[]) {
   for (let i = 0; i < ops.length; i += 450) {
@@ -173,70 +252,203 @@ async function commitInChunks(ops: ((b: WriteBatch) => void)[]) {
   }
 }
 
-export async function createPlayer(name: string, averageOverride: number | null) {
-  const ref = doc(collection(db, 'players'));
-  await setDoc(ref, { name: name.trim(), averageOverride, createdAt: serverTimestamp() });
-  return ref.id;
+// ---------- Ligas ----------
+
+export interface LeagueInput {
+  name: string;
+  kind: LeagueKind;
+  visibility: Visibility;
+  venue: string;
+  schedule: string;
+  seasonStart: string;
+  seasonEnd: string;
+  contactName: string;
+  contactPhone: string;
+  requirePhoto: boolean;
 }
 
-export async function updatePlayer(id: string, patch: Partial<Omit<Player, 'id'>>) {
-  await updateDoc(doc(db, 'players', id), patch);
+/** Crea la liga y deja a quien la crea como dueño (las reglas exigen que ambas cosas vayan juntas). */
+export async function createLeague(owner: { uid: string; name: string }, input: LeagueInput) {
+  const leagueRef = doc(collection(db, 'leagues'));
+  const batch = writeBatch(db);
+  batch.set(leagueRef, { ...input, name: input.name.trim(), ownerUid: owner.uid, createdAt: serverTimestamp() });
+  batch.set(doc(db, 'members', memberId(leagueRef.id, owner.uid)), {
+    leagueId: leagueRef.id,
+    uid: owner.uid,
+    name: owner.name,
+    role: 'owner',
+    playerId: null,
+    joinedAt: serverTimestamp(),
+  });
+  await batch.commit();
+  return leagueRef.id;
 }
 
-/** Borra el jugador con todas sus participaciones y envíos; su cuenta, si tiene, queda sin vincular. */
-export async function deletePlayer(id: string, uid?: string | null) {
+export async function updateLeague(lid: string, patch: Partial<LeagueInput>) {
+  const code = patch.name != null ? await getInviteCode(lid) : null;
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'leagues', lid), patch);
+  // La invitación muestra el nombre de la liga antes de unirse.
+  if (code) batch.update(doc(db, 'invites', code), { leagueName: patch.name });
+  await batch.commit();
+}
+
+/** Borra la liga con todo su contenido, miembros e invitación. */
+export async function deleteLeague(lid: string, myUid: string) {
+  const cols: LeagueCol[] = ['entries', 'submissions', 'photos', 'events', 'players'];
+  const [code, members, ...snaps] = await Promise.all([
+    getInviteCode(lid),
+    getDocs(query(collection(db, 'members'), where('leagueId', '==', lid))),
+    ...cols.map((c) => getDocs(col(lid, c))),
+  ]);
+  const ops: ((b: WriteBatch) => void)[] = [];
+  snaps.forEach((s) => s.docs.forEach((d) => ops.push((b) => b.delete(d.ref))));
+  members.docs.filter((d) => d.get('uid') !== myUid).forEach((d) => ops.push((b) => b.delete(d.ref)));
+  if (code) ops.push((b) => b.delete(doc(db, 'invites', code)));
+  ops.push((b) => b.delete(doc(db, 'leagues', lid, 'private', 'invite')));
+  await commitInChunks(ops);
+  // Lo último, juntos: mientras exista la membresía del dueño, las reglas lo reconocen como admin.
+  const last = writeBatch(db);
+  if (members.docs.some((d) => d.get('uid') === myUid)) last.delete(doc(db, 'members', memberId(lid, myUid)));
+  last.delete(doc(db, 'leagues', lid));
+  await last.commit();
+}
+
+/** Torneo sin liga: su "liga" de un solo torneo (con dueño, invitación y admins) y el torneo adentro. */
+export async function createTournament(owner: { uid: string; name: string }, input: LeagueInput, date: string) {
+  const lid = await createLeague(owner, { ...input, kind: 'torneo', schedule: '', seasonStart: date, seasonEnd: date });
+  const eid = await createEvent(lid, {
+    type: 'torneo',
+    name: input.name.trim(),
+    date,
+    games: 3,
+    hcpBase: 230,
+    hcpPercent: 80,
+    individualRankBy: 'hcp',
+    teamRankBy: 'scratch',
+    categoryCuts: DEFAULT_CUTS,
+    teamSize: 3,
+    announcement: '',
+  });
+  return { lid, eid };
+}
+
+/** Código de invitación: 8 caracteres sin letras que se confundan (O/0, I/1). */
+function randomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return [...bytes].map((b) => chars[b % chars.length]).join('');
+}
+
+/** Código vigente de la liga (solo lo leen sus admins). */
+export async function getInviteCode(lid: string): Promise<string | null> {
+  const snap = await getDoc(doc(db, 'leagues', lid, 'private', 'invite'));
+  return snap.exists() ? (snap.get('code') as string) : null;
+}
+
+/** Crea (o cambia) el código de invitación: el anterior deja de servir. */
+export async function renewInviteCode(league: League) {
+  const old = await getInviteCode(league.id);
+  const code = randomCode();
+  const batch = writeBatch(db);
+  if (old) batch.delete(doc(db, 'invites', old));
+  batch.set(doc(db, 'invites', code), { leagueId: league.id, leagueName: league.name, createdAt: serverTimestamp() });
+  batch.set(doc(db, 'leagues', league.id, 'private', 'invite'), { code });
+  await batch.commit();
+  return code;
+}
+
+export async function getInvite(code: string): Promise<Invite | null> {
+  const snap = await getDoc(doc(db, 'invites', code.trim().toUpperCase()));
+  return snap.exists() ? ({ id: snap.id, ...snap.data() } as Invite) : null;
+}
+
+/** Unirse a una liga: pública sin más, privada con el código de invitación. */
+export async function joinLeague(lid: string, user: { uid: string; name: string }, code: string | null) {
+  await setDoc(doc(db, 'members', memberId(lid, user.uid)), {
+    leagueId: lid,
+    uid: user.uid,
+    name: user.name,
+    role: 'member',
+    playerId: null,
+    joinedAt: serverTimestamp(),
+    ...(code ? { code: code.trim().toUpperCase() } : {}),
+  });
+}
+
+/** Salir de la liga (o que un admin saque a alguien): su jugador queda sin cuenta. */
+export async function removeMember(member: Member) {
+  const batch = writeBatch(db);
+  if (member.playerId) batch.update(ref(member.leagueId, 'players', member.playerId), { uid: null });
+  batch.delete(doc(db, 'members', member.id));
+  await batch.commit();
+}
+
+export async function setMemberRole(member: Member, role: Exclude<LeagueRole, 'owner'>) {
+  await updateDoc(doc(db, 'members', member.id), { role });
+}
+
+export async function setSuperadmin(uid: string, value: boolean) {
+  await updateDoc(doc(db, 'users', uid), { superadmin: value });
+}
+
+// ---------- Jugadores y vínculo con la cuenta ----------
+
+export async function createPlayer(lid: string, name: string, averageOverride: number | null) {
+  const r = doc(col(lid, 'players'));
+  await setDoc(r, { name: name.trim(), averageOverride, createdAt: serverTimestamp() });
+  return r.id;
+}
+
+export async function updatePlayer(lid: string, id: string, patch: Partial<Omit<Player, 'id'>>) {
+  await updateDoc(ref(lid, 'players', id), patch);
+}
+
+/** Borra el jugador con sus participaciones y envíos; su cuenta, si tiene, queda sin vincular. */
+export async function deletePlayer(lid: string, id: string, uid?: string | null) {
   const [entries, subs] = await Promise.all([
-    getDocs(query(collection(db, 'entries'), where('playerId', '==', id))),
-    getDocs(query(collection(db, 'submissions'), where('playerId', '==', id))),
+    getDocs(query(col(lid, 'entries'), where('playerId', '==', id))),
+    getDocs(query(col(lid, 'submissions'), where('playerId', '==', id))),
   ]);
   const ops: ((b: WriteBatch) => void)[] = [];
   entries.docs.forEach((d) => {
     const eventId = d.get('eventId') as string;
     ops.push((b) => b.delete(d.ref));
-    ops.push((b) => b.update(doc(db, 'events', eventId), { playerCount: increment(-1) }));
+    ops.push((b) => b.update(ref(lid, 'events', eventId), { playerCount: increment(-1) }));
   });
   subs.docs.forEach((d) => ops.push((b) => b.delete(d.ref)));
-  if (uid) ops.push((b) => b.update(doc(db, 'users', uid), { playerId: null }));
-  ops.push((b) => b.delete(doc(db, 'players', id)));
+  if (uid) ops.push((b) => b.update(doc(db, 'members', memberId(lid, uid)), { playerId: null }));
+  ops.push((b) => b.delete(ref(lid, 'players', id)));
   await commitInChunks(ops);
 }
 
-// ---------- Cuentas ----------
-
-/** El jugador reclama su perfil (una sola vez). Las reglas exigen que ambos cambios vayan juntos. */
-export async function claimPlayer(uid: string, playerId: string) {
+/** El miembro se vincula con un jugador de la liga que todavía no tiene cuenta. */
+export async function claimPlayer(lid: string, uid: string, playerId: string) {
   const batch = writeBatch(db);
-  batch.update(doc(db, 'players', playerId), { uid });
-  batch.update(doc(db, 'users', uid), { playerId });
+  batch.update(ref(lid, 'players', playerId), { uid });
+  batch.update(doc(db, 'members', memberId(lid, uid)), { playerId });
   await batch.commit();
 }
 
-/** "No estoy en la lista": crea su propio jugador ya vinculado a la cuenta. */
-export async function createOwnPlayer(uid: string, name: string) {
-  const playerId = newId('players');
+/** "No estoy en la lista": crea su propio jugador en la liga, ya vinculado. */
+export async function createOwnPlayer(lid: string, uid: string, name: string) {
+  const playerId = newId(lid, 'players');
   const batch = writeBatch(db);
-  batch.set(doc(db, 'players', playerId), { name: name.trim(), averageOverride: null, uid, createdAt: serverTimestamp() });
-  batch.update(doc(db, 'users', uid), { playerId });
+  batch.set(ref(lid, 'players', playerId), { name: name.trim(), averageOverride: null, uid, createdAt: serverTimestamp() });
+  batch.update(doc(db, 'members', memberId(lid, uid)), { playerId });
   await batch.commit();
   return playerId;
 }
 
 /** Admin: separa la cuenta del jugador (se vinculó al perfil equivocado). */
-export async function unlinkAccount(playerId: string, uid: string) {
+export async function unlinkAccount(lid: string, playerId: string, uid: string) {
   const batch = writeBatch(db);
-  batch.update(doc(db, 'players', playerId), { uid: null });
-  batch.update(doc(db, 'users', uid), { playerId: null });
+  batch.update(ref(lid, 'players', playerId), { uid: null });
+  batch.update(doc(db, 'members', memberId(lid, uid)), { playerId: null });
   await batch.commit();
 }
 
-/** El jugador confirma (o quita) que va a la práctica. */
-export async function setRsvp(eventId: string, playerId: string, going: boolean) {
-  await updateDoc(doc(db, 'events', eventId), { [`rsvp.${playerId}`]: going ? true : deleteField() });
-}
-
-export async function setRole(uid: string, role: Role) {
-  await updateDoc(doc(db, 'users', uid), { role });
-}
+// ---------- Eventos ----------
 
 export interface EventInput {
   type: EventType;
@@ -248,35 +460,42 @@ export interface EventInput {
   individualRankBy: RankBy;
   teamRankBy: RankBy;
   categoryCuts: [number, number, number];
+  teamSize: number;
+  announcement: string;
 }
 
-export async function createEvent(input: EventInput) {
-  const ref = doc(collection(db, 'events'));
-  await setDoc(ref, { ...input, teams: {}, playerCount: 0, createdAt: serverTimestamp() });
-  return ref.id;
+export async function createEvent(lid: string, input: EventInput) {
+  const r = doc(col(lid, 'events'));
+  await setDoc(r, { ...input, teams: {}, playerCount: 0, createdAt: serverTimestamp() });
+  return r.id;
 }
 
-export async function updateEvent(id: string, patch: Partial<EventInput>) {
-  await updateDoc(doc(db, 'events', id), patch);
+export async function updateEvent(lid: string, id: string, patch: Partial<EventInput>) {
+  await updateDoc(ref(lid, 'events', id), patch);
 }
 
-export async function deleteEvent(id: string) {
+export async function deleteEvent(lid: string, id: string) {
   const [entries, subs, photos] = await Promise.all([
-    getDocs(query(collection(db, 'entries'), where('eventId', '==', id))),
-    getDocs(query(collection(db, 'submissions'), where('eventId', '==', id))),
-    getDocs(query(collection(db, 'photos'), where('eventId', '==', id))),
+    getDocs(query(col(lid, 'entries'), where('eventId', '==', id))),
+    getDocs(query(col(lid, 'submissions'), where('eventId', '==', id))),
+    getDocs(query(col(lid, 'photos'), where('eventId', '==', id))),
   ]);
   const ops: ((b: WriteBatch) => void)[] = [];
   [...entries.docs, ...subs.docs, ...photos.docs].forEach((d) => ops.push((b) => b.delete(d.ref)));
-  ops.push((b) => b.delete(doc(db, 'events', id)));
+  ops.push((b) => b.delete(ref(lid, 'events', id)));
   await commitInChunks(ops);
 }
 
+/** El jugador confirma (o quita) que va a la práctica. */
+export async function setRsvp(lid: string, eventId: string, playerId: string, going: boolean) {
+  await updateDoc(ref(lid, 'events', eventId), { [`rsvp.${playerId}`]: going ? true : deleteField() });
+}
+
 /** Inscribe jugadores en el evento con el promedio que tienen hoy. */
-export async function addEntries(event: BowlingEvent, players: { id: string; average: number }[]) {
+export async function addEntries(lid: string, event: BowlingEvent, players: { id: string; average: number }[]) {
   const batch = writeBatch(db);
   for (const p of players) {
-    batch.set(doc(db, 'entries', entryId(event.id, p.id)), {
+    batch.set(ref(lid, 'entries', entryId(event.id, p.id)), {
       eventId: event.id,
       playerId: p.id,
       teamId: null,
@@ -287,62 +506,88 @@ export async function addEntries(event: BowlingEvent, players: { id: string; ave
       createdAt: serverTimestamp(),
     });
   }
-  batch.update(doc(db, 'events', event.id), { playerCount: increment(players.length) });
+  batch.update(ref(lid, 'events', event.id), { playerCount: increment(players.length) });
   await batch.commit();
 }
 
-export async function updateEntry(id: string, patch: Partial<Omit<Entry, 'id' | 'eventId' | 'playerId'>>) {
-  await updateDoc(doc(db, 'entries', id), patch);
+export async function updateEntry(lid: string, id: string, patch: Partial<Omit<Entry, 'id' | 'eventId' | 'playerId'>>) {
+  await updateDoc(ref(lid, 'entries', id), patch);
 }
 
-export async function updateEntries(patches: { id: string; patch: Partial<Entry> }[]) {
-  await commitInChunks(patches.map(({ id, patch }) => (b) => b.update(doc(db, 'entries', id), patch)));
+export async function updateEntries(lid: string, patches: { id: string; patch: Partial<Entry> }[]) {
+  await commitInChunks(patches.map(({ id, patch }) => (b) => b.update(ref(lid, 'entries', id), patch)));
 }
 
-export async function removeEntry(entry: Entry) {
+/** Guarda un juego: pinos, cuadros (si se anotó tiro por tiro) y si cuenta sin foto. */
+export async function saveGame(
+  lid: string,
+  event: BowlingEvent,
+  entry: Entry,
+  game: number,
+  value: { score: number | null; frames: GameFrames | null },
+  requirePhoto: boolean,
+) {
+  const scores = slots(entry.scores, event.games, null);
+  const photos = slots(entry.photos, event.games, null);
+  scores[game] = value.score;
+  // Sin foto obligatoria el juego cuenta de una; con foto, vuelve a borrador hasta verificarlo.
+  photos[game] = value.score != null && !requirePhoto ? NO_PHOTO : null;
+  await updateDoc(ref(lid, 'entries', entry.id), {
+    scores,
+    photos,
+    [`frames.${game}`]: value.frames ?? deleteField(),
+  });
+}
+
+export async function removeEntry(lid: string, entry: Entry) {
   const batch = writeBatch(db);
-  batch.delete(doc(db, 'entries', entry.id));
-  batch.update(doc(db, 'events', entry.eventId), { playerCount: increment(-1) });
+  batch.delete(ref(lid, 'entries', entry.id));
+  batch.update(ref(lid, 'events', entry.eventId), { playerCount: increment(-1) });
   await batch.commit();
 }
 
-export async function addTeam(eventId: string, name: string) {
-  await updateDoc(doc(db, 'events', eventId), { [`teams.${newId('events')}`]: { name, order: Date.now() } });
+// ---------- Equipos ----------
+
+export async function addTeam(lid: string, eventId: string, name: string) {
+  await updateDoc(ref(lid, 'events', eventId), { [`teams.${newId(lid, 'events')}`]: { name, order: Date.now() } });
 }
 
-export async function renameTeam(eventId: string, teamId: string, name: string) {
-  await updateDoc(doc(db, 'events', eventId), { [`teams.${teamId}.name`]: name });
+export async function renameTeam(lid: string, eventId: string, teamId: string, name: string) {
+  await updateDoc(ref(lid, 'events', eventId), { [`teams.${teamId}.name`]: name });
 }
 
 /**
  * Arma los equipos de una vez: reutiliza los equipos existentes en orden, crea los que falten,
  * borra los que sobren y asigna a cada inscrito. Todo en una sola escritura.
  */
-export async function applyTeams(event: BowlingEvent, groups: { teamId: string | null; name: string; entryIds: string[] }[]) {
+export async function applyTeams(lid: string, event: BowlingEvent, groups: { teamId: string | null; name: string; entryIds: string[] }[]) {
   const batch = writeBatch(db);
   const eventPatch: Record<string, unknown> = {};
   const used = new Set<string>();
   groups.forEach((g, i) => {
-    const teamId = g.teamId ?? newId('events');
+    const teamId = g.teamId ?? newId(lid, 'events');
     used.add(teamId);
     if (!g.teamId) eventPatch[`teams.${teamId}`] = { name: g.name, order: Date.now() + i };
-    g.entryIds.forEach((id) => batch.update(doc(db, 'entries', id), { teamId }));
+    g.entryIds.forEach((id) => batch.update(ref(lid, 'entries', id), { teamId }));
   });
   Object.keys(event.teams ?? {})
     .filter((id) => !used.has(id))
     .forEach((id) => (eventPatch[`teams.${id}`] = deleteField()));
-  if (Object.keys(eventPatch).length) batch.update(doc(db, 'events', event.id), eventPatch);
+  if (Object.keys(eventPatch).length) batch.update(ref(lid, 'events', event.id), eventPatch);
   await batch.commit();
 }
 
-export async function deleteTeam(eventId: string, teamId: string, memberEntryIds: string[]) {
+export async function deleteTeam(lid: string, eventId: string, teamId: string, memberEntryIds: string[]) {
   const batch = writeBatch(db);
-  batch.update(doc(db, 'events', eventId), { [`teams.${teamId}`]: deleteField() });
-  memberEntryIds.forEach((id) => batch.update(doc(db, 'entries', id), { teamId: null }));
+  batch.update(ref(lid, 'events', eventId), { [`teams.${teamId}`]: deleteField() });
+  memberEntryIds.forEach((id) => batch.update(ref(lid, 'entries', id), { teamId: null }));
   await batch.commit();
 }
 
-// ---------- Fotos y verificación ----------
+// ---------- Fotos, verificación y envíos ----------
+
+/** Solo lo que se guarda de la foto (la versión grande para la IA no sube). */
+const photoFields = (p: Omit<Photo, 'id'>) => ({ data: p.data, width: p.width, height: p.height });
 
 export interface VerifiedWrite {
   /** Participación existente o null si hay que inscribir al jugador. */
@@ -357,10 +602,10 @@ export interface VerifiedWrite {
  * Guarda la foto y marca como verificados los juegos que se leyeron de ella (admin).
  * Inscribe al jugador si todavía no estaba en el evento.
  */
-export async function saveVerifiedGames(event: BowlingEvent, photo: Omit<Photo, 'id'>, writes: VerifiedWrite[]) {
-  const photoId = newId('photos');
+export async function saveVerifiedGames(lid: string, event: BowlingEvent, photo: Omit<Photo, 'id'>, writes: VerifiedWrite[]) {
+  const photoId = newId(lid, 'photos');
   const batch = writeBatch(db);
-  batch.set(doc(db, 'photos', photoId), { ...photo, eventId: event.id, createdAt: serverTimestamp() });
+  batch.set(ref(lid, 'photos', photoId), { ...photoFields(photo), eventId: event.id, createdAt: serverTimestamp() });
   let added = 0;
   for (const w of writes) {
     const scores = slots(w.entry?.scores, event.games, null);
@@ -370,10 +615,10 @@ export async function saveVerifiedGames(event: BowlingEvent, photo: Omit<Photo, 
       photos[+i] = photoId;
     }
     if (w.entry) {
-      batch.update(doc(db, 'entries', w.entry.id), { scores, photos });
+      batch.update(ref(lid, 'entries', w.entry.id), { scores, photos });
     } else {
       added++;
-      batch.set(doc(db, 'entries', entryId(event.id, w.playerId)), {
+      batch.set(ref(lid, 'entries', entryId(event.id, w.playerId)), {
         eventId: event.id,
         playerId: w.playerId,
         teamId: null,
@@ -385,31 +630,38 @@ export async function saveVerifiedGames(event: BowlingEvent, photo: Omit<Photo, 
       });
     }
   }
-  if (added) batch.update(doc(db, 'events', event.id), { playerCount: increment(added) });
+  if (added) batch.update(ref(lid, 'events', event.id), { playerCount: increment(added) });
   await batch.commit();
   return photoId;
 }
 
-/** Envío público de un jugador: foto + juegos, quedan pendientes de aprobación. */
-export async function submitGames(input: {
-  playerId: string;
-  /** Evento elegido, o null para subir por fecha. */
-  eventId: string | null;
-  date: string | null;
-  scores: (number | null)[];
-  scanned: (number | null)[] | null;
-  photo: Omit<Photo, 'id'>;
-}) {
-  const photoId = newId('photos');
-  const subId = newId('submissions');
+/** Envío de un jugador: juegos (y foto si hay), quedan pendientes de aprobación. */
+export async function submitGames(
+  lid: string,
+  input: {
+    playerId: string;
+    /** Evento elegido, o null para subir por fecha. */
+    eventId: string | null;
+    date: string | null;
+    scores: (number | null)[];
+    scanned: (number | null)[] | null;
+    frames: Record<string, GameFrames> | null;
+    photo: Omit<Photo, 'id'> | null;
+  },
+) {
+  const photoId = input.photo ? newId(lid, 'photos') : null;
+  const subId = newId(lid, 'submissions');
   const batch = writeBatch(db);
-  batch.set(doc(db, 'photos', photoId), { ...input.photo, eventId: input.eventId, createdAt: serverTimestamp() });
-  batch.set(doc(db, 'submissions', subId), {
+  if (input.photo && photoId) {
+    batch.set(ref(lid, 'photos', photoId), { ...photoFields(input.photo), eventId: input.eventId, createdAt: serverTimestamp() });
+  }
+  batch.set(ref(lid, 'submissions', subId), {
     playerId: input.playerId,
     eventId: input.eventId,
     date: input.eventId ? null : input.date,
     scores: input.scores,
     scanned: input.scanned,
+    frames: input.frames,
     photoId,
     status: 'pendiente',
     note: null,
@@ -419,39 +671,49 @@ export async function submitGames(input: {
   return subId;
 }
 
-/** Aprueba un envío: copia los juegos a la participación del jugador como verificados. */
+/**
+ * Aprueba un envío: copia los juegos (y sus cuadros) a la participación del jugador como verificados.
+ * `values` va por juego del evento; `start` es el juego donde cae el J1 del envío.
+ */
 export async function approveSubmission(
+  lid: string,
   sub: Submission,
   event: BowlingEvent,
   entry: Entry | null,
   average: number,
   values: Record<number, number>,
+  start: number,
 ) {
   const batch = writeBatch(db);
   const scores = slots(entry?.scores, event.games, null);
   const photos = slots(entry?.photos, event.games, null);
+  const frames: Record<string, GameFrames> = { ...(entry?.frames ?? {}) };
   for (const [i, v] of Object.entries(values)) {
     scores[+i] = v;
-    photos[+i] = sub.photoId;
+    photos[+i] = sub.photoId ?? NO_PHOTO;
+    const f = sub.frames?.[String(+i - start)];
+    // Los cuadros solo valen si dan el mismo total que se aprueba.
+    if (f && scoreGame(f.rolls).score === v) frames[i] = f;
+    else delete frames[i];
   }
+  const payload = { scores, photos, frames };
   if (entry) {
-    batch.update(doc(db, 'entries', entry.id), { scores, photos });
+    batch.update(ref(lid, 'entries', entry.id), payload);
   } else {
-    batch.set(doc(db, 'entries', entryId(event.id, sub.playerId)), {
+    batch.set(ref(lid, 'entries', entryId(event.id, sub.playerId)), {
       eventId: event.id,
       playerId: sub.playerId,
       teamId: null,
       average,
       handicapOverride: null,
-      scores,
-      photos,
+      ...payload,
       createdAt: serverTimestamp(),
     });
-    batch.update(doc(db, 'events', event.id), { playerCount: increment(1) });
+    batch.update(ref(lid, 'events', event.id), { playerCount: increment(1) });
   }
-  batch.update(doc(db, 'submissions', sub.id), { status: 'aprobado', eventId: event.id, reviewedAt: serverTimestamp() });
+  batch.update(ref(lid, 'submissions', sub.id), { status: 'aprobado', eventId: event.id, reviewedAt: serverTimestamp() });
   // La foto de un envío por fecha queda asociada al evento (se borra con él).
-  if (!sub.eventId) batch.update(doc(db, 'photos', sub.photoId), { eventId: event.id });
+  if (!sub.eventId && sub.photoId) batch.update(ref(lid, 'photos', sub.photoId), { eventId: event.id });
   await batch.commit();
 }
 
@@ -459,7 +721,7 @@ export async function approveSubmission(
  * Evento donde se aprueba un envío por fecha: la práctica de ese día o, si no existe, se crea.
  * Devuelve el evento listo para usar en approveSubmission.
  */
-export async function practiceForDate(events: BowlingEvent[], date: string, games: number): Promise<BowlingEvent> {
+export async function practiceForDate(lid: string, events: BowlingEvent[], date: string, games: number): Promise<BowlingEvent> {
   const existing = events.find((e) => e.type === 'practica' && e.date === date);
   if (existing) return existing;
   const input: EventInput = {
@@ -472,11 +734,25 @@ export async function practiceForDate(events: BowlingEvent[], date: string, game
     individualRankBy: 'scratch',
     teamRankBy: 'scratch',
     categoryCuts: [200, 175, 160],
+    teamSize: 0,
+    announcement: '',
   };
-  const id = await createEvent(input);
+  const id = await createEvent(lid, input);
   return { id, ...input, teams: {}, playerCount: 0 };
 }
 
-export async function rejectSubmission(sub: Submission, note: string | null) {
-  await updateDoc(doc(db, 'submissions', sub.id), { status: 'rechazado', note, reviewedAt: serverTimestamp() });
+export async function rejectSubmission(lid: string, sub: Submission, note: string | null) {
+  await updateDoc(ref(lid, 'submissions', sub.id), { status: 'rechazado', note, reviewedAt: serverTimestamp() });
+}
+
+/**
+ * Libera espacio: borra las fotos de la liga de hace más de `months` meses.
+ * Los juegos siguen verificados; solo deja de verse la foto.
+ */
+export async function deleteOldPhotos(lid: string, months: number) {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - months);
+  const snap = await getDocs(query(col(lid, 'photos'), where('createdAt', '<', Timestamp.fromDate(cutoff))));
+  await commitInChunks(snap.docs.map((d) => (b) => b.delete(d.ref)));
+  return snap.size;
 }

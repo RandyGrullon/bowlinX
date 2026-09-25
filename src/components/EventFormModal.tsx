@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { createEvent, updateEvent, type EventInput } from '../lib/data';
 import { nextTuesday, toIsoDate } from '../lib/format';
+import { useLeagueCtx } from '../lib/league';
 import { DEFAULT_CUTS } from '../lib/stats';
 import type { BowlingEvent, EventType, RankBy } from '../lib/types';
 import { useAction } from './feedback';
@@ -17,6 +18,8 @@ const defaults = (type: EventType): EventInput => ({
   individualRankBy: 'hcp',
   teamRankBy: 'scratch',
   categoryCuts: DEFAULT_CUTS,
+  teamSize: type === 'torneo' ? 3 : 0,
+  announcement: '',
 });
 
 export function EventFormModal({
@@ -33,6 +36,7 @@ export function EventFormModal({
   event?: BowlingEvent;
   onCreated?: (id: string) => void;
 }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const [form, setForm] = useState<EventInput>(defaults(type));
   const [busy, setBusy] = useState(false);
@@ -51,6 +55,8 @@ export function EventFormModal({
             individualRankBy: event.individualRankBy ?? 'hcp',
             teamRankBy: event.teamRankBy ?? 'scratch',
             categoryCuts: event.categoryCuts ?? DEFAULT_CUTS,
+            teamSize: event.teamSize ?? (event.type === 'torneo' ? 3 : 0),
+            announcement: event.announcement ?? '',
           }
         : defaults(type),
     );
@@ -68,12 +74,14 @@ export function EventFormModal({
       games: Math.min(10, Math.max(1, Math.round(form.games) || 1)),
       hcpBase: Math.max(0, Math.round(form.hcpBase) || 0),
       hcpPercent: Math.min(100, Math.max(0, Math.round(form.hcpPercent) || 0)),
+      teamSize: Math.min(10, Math.max(0, Math.round(form.teamSize) || 0)),
+      announcement: form.announcement.trim().slice(0, 500),
     };
     if (event) {
-      await run(() => updateEvent(event.id, data), 'Cambios guardados');
+      await run(() => updateEvent(lid, event.id, data), 'Cambios guardados');
       onClose();
     } else {
-      const id = await run(() => createEvent(data), isTorneo ? 'Torneo creado' : 'Práctica creada');
+      const id = await run(() => createEvent(lid, data), isTorneo ? 'Torneo creado' : 'Práctica creada');
       onClose();
       if (id) onCreated?.(id);
     }
@@ -122,6 +130,10 @@ export function EventFormModal({
               Handicap por juego = ({form.hcpBase || 0} − promedio) × {form.hcpPercent || 0}%. Ej.: promedio 165 →{' '}
               <b className="text-fg">{Math.max(0, Math.floor((((form.hcpBase || 0) - 165) * (form.hcpPercent || 0)) / 100))}</b> pinos.
             </p>
+            <Field label="Jugadores por equipo" hint="Un equipo lleno no acepta más. 0 = sin límite">
+              <Input type="number" inputMode="numeric" min={0} max={10} value={form.teamSize} onChange={(e) => set('teamSize', +e.target.value)} />
+            </Field>
+            <div />
             <Field label="Individual se clasifica">
               <Select value={form.individualRankBy} onChange={(e) => set('individualRankBy', e.target.value as RankBy)}>
                 <option value="hcp">Con handicap</option>
@@ -156,6 +168,20 @@ export function EventFormModal({
               </div>
               <span className="text-xs text-muted">Promedio mínimo de cada una. Se usan al armar equipos: uno de cada categoría cuando se puede.</span>
             </fieldset>
+            <Field
+              label="Anuncio para la liga"
+              className="col-span-2"
+              hint="Sale arriba en Eventos para todos los miembros hasta el día del torneo, con el contacto de la liga para escribirle por WhatsApp."
+            >
+              <textarea
+                rows={3}
+                maxLength={500}
+                value={form.announcement}
+                onChange={(e) => set('announcement', e.target.value)}
+                placeholder="Inscripción RD$1,000 · 3 juegos · equipos de 3. ¡Confirma con el admin!"
+                className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-base text-fg placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/40 focus:outline-none sm:text-sm"
+              />
+            </Field>
           </>
         )}
       </form>

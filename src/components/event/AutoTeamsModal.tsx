@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Shuffle } from 'lucide-react';
 import { applyTeams } from '../../lib/data';
+import { useLeagueCtx } from '../../lib/league';
 import { balancedTeams, category } from '../../lib/stats';
 import type { BowlingEvent, Entry, Player } from '../../lib/types';
 import { useAction } from '../feedback';
@@ -24,12 +25,14 @@ export function AutoTeamsModal({
   entries: Entry[];
   players: Player[];
 }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
-  const [size, setSize] = useState(3);
+  const defaultSize = event.teamSize || 3;
+  const [size, setSize] = useState(defaultSize);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (open) setSize(3);
-  }, [open]);
+    if (open) setSize(defaultSize);
+  }, [open, defaultSize]);
 
   const nameOf = (e: Entry) => players.find((p) => p.id === e.playerId)?.name ?? '(jugador borrado)';
   const existing = Object.entries(event.teams ?? {}).sort(([, a], [, b]) => a.order - b.order);
@@ -52,7 +55,7 @@ export function AutoTeamsModal({
   async function apply() {
     setBusy(true);
     const ok = await run(async () => {
-      await applyTeams(event, proposal.map((t) => ({ teamId: t.teamId, name: t.name, entryIds: t.members.map((m) => m.id) })));
+      await applyTeams(lid, event, proposal.map((t) => ({ teamId: t.teamId, name: t.name, entryIds: t.members.map((m) => m.id) })));
       return true;
     }, `${proposal.length} equipos armados`);
     setBusy(false);

@@ -1,30 +1,14 @@
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { BadgeCheck, ExternalLink, Link2, Plus, Search, ShieldCheck, Trash2, Unlink, UserRound } from 'lucide-react';
-import { isFixedAdmin } from '../lib/admins';
-import { createPlayer, deletePlayer, setRole, unlinkAccount, updatePlayer, useAllEntries, usePlayers, useUsers } from '../lib/data';
+import { createPlayer, deletePlayer, unlinkAccount, updatePlayer, useAllEntries, useLeagueMembers, usePlayers } from '../lib/data';
+import { roleLabel, useLeagueCtx } from '../lib/league';
 import { playerStats, type PlayerStats } from '../lib/stats';
-import type { Entry, Player, UserProfile } from '../lib/types';
+import type { Entry, Member, Player } from '../lib/types';
 import { useAction, useFeedback } from '../components/feedback';
 import { playerUrl, shareLink } from '../components/share';
+import { Avatar } from '../components/Avatar';
 import { Badge, Button, Card, Empty, Field, Input, ListSkeleton, LoadError, Modal } from '../components/ui';
-
-export function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join('');
-}
-
-export function Avatar({ name, className = 'size-9 text-sm' }: { name: string; className?: string }) {
-  return (
-    <div className={`flex shrink-0 items-center justify-center rounded-full bg-accent-soft font-semibold text-accent ${className}`}>
-      {initials(name)}
-    </div>
-  );
-}
 
 export function useStatsByPlayer(entries: Entry[]) {
   return useMemo(() => {
@@ -38,13 +22,15 @@ export function useStatsByPlayer(entries: Entry[]) {
 
 const noStats: PlayerStats = { games: 0, pins: 0, autoAverage: null, high: 0, highSeries: 0, pending: 0 };
 
+/** Admin: jugadores de la liga, su promedio y la cuenta vinculada. */
 export default function PlayersPage() {
+  const { lid, base } = useLeagueCtx();
   const { toast } = useFeedback();
-  const players = usePlayers();
-  const users = useUsers(true);
-  const userById = useMemo(() => new Map(users.data.map((u) => [u.id, u])), [users.data]);
-  const unlinked = users.data.filter((u) => !u.playerId);
-  const entries = useAllEntries();
+  const players = usePlayers(lid);
+  const members = useLeagueMembers(lid);
+  const memberByUid = useMemo(() => new Map(members.data.map((m) => [m.uid, m])), [members.data]);
+  const unlinked = members.data.filter((m) => !m.playerId);
+  const entries = useAllEntries(lid);
   const stats = useStatsByPlayer(entries.data);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<Player | 'new' | null>(null);
@@ -52,7 +38,7 @@ export default function PlayersPage() {
   const filtered = players.data.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
 
   async function share(p: Player) {
-    const copied = await shareLink(playerUrl(p.id), `${p.name} · BowlinX`);
+    const copied = await shareLink(playerUrl(lid, p.id), `${p.name} · BowlinX`);
     if (copied) toast('Link copiado');
   }
 
@@ -60,8 +46,8 @@ export default function PlayersPage() {
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Jugadores</h1>
-          <p className="text-sm text-muted">Promedio calculado con los juegos verificados con foto.</p>
+          <h2 className="text-lg font-bold tracking-tight">Jugadores</h2>
+          <p className="text-sm text-muted">Promedio calculado con los juegos que cuentan.</p>
         </div>
         <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setEditing('new')}>
           <span className="hidden sm:inline">Nuevo jugador</span>
@@ -82,7 +68,7 @@ export default function PlayersPage() {
         <ListSkeleton rows={8} />
       ) : players.data.length === 0 ? (
         <Empty icon={<UserRound className="size-8" />} title="Todavía no hay jugadores">
-          Agrega a los jugadores del club; después los inscribes en torneos y prácticas.
+          Agrega a los jugadores de la liga, o deja que cada miembro cree el suyo al unirse.
         </Empty>
       ) : (
         <Card className="stagger divide-y divide-line overflow-hidden">
@@ -96,7 +82,7 @@ export default function PlayersPage() {
           {filtered.map((p, i) => {
             const s = stats.get(p.id) ?? noStats;
             const avg = p.averageOverride ?? s.autoAverage;
-            const account = p.uid ? userById.get(p.uid) : undefined;
+            const account = p.uid ? memberByUid.get(p.uid) : undefined;
             return (
               <div
                 key={p.id}
@@ -109,8 +95,8 @@ export default function PlayersPage() {
                     <div className="flex items-center gap-1.5">
                       <span className="truncate font-medium">{p.name}</span>
                       {p.uid && (
-                        <span title={account ? `Cuenta: ${account.email}` : 'Tiene cuenta'} className="shrink-0 text-ok">
-                          {account?.role === 'admin' ? <ShieldCheck className="size-4" /> : <BadgeCheck className="size-4" />}
+                        <span title={account ? `Cuenta: ${account.name}` : 'Tiene cuenta'} className="shrink-0 text-ok">
+                          {account && account.role !== 'member' ? <ShieldCheck className="size-4" /> : <BadgeCheck className="size-4" />}
                         </span>
                       )}
                     </div>
@@ -135,7 +121,7 @@ export default function PlayersPage() {
                 <div className="flex justify-end gap-1">
                   <Button variant="ghost" size="sm" title="Compartir link" aria-label="Compartir link" onClick={() => share(p)} icon={<Link2 className="size-4" />} />
                   <Link
-                    to={`/j/${p.id}`}
+                    to={`${base}/j/${p.id}`}
                     title="Ver su página"
                     aria-label="Ver su página"
                     className="inline-flex size-8 items-center justify-center rounded-xl text-fg hover:bg-surface-2"
@@ -152,16 +138,13 @@ export default function PlayersPage() {
 
       {unlinked.length > 0 && (
         <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-semibold text-muted">Cuentas sin vincular ({unlinked.length})</h2>
+          <h3 className="text-sm font-semibold text-muted">Miembros sin jugador ({unlinked.length})</h3>
           <Card className="divide-y divide-line">
             {unlinked.map((u) => (
               <div key={u.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
                 <Avatar name={u.name} className="size-8 text-xs" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{u.name}</div>
-                  <div className="truncate text-xs text-muted">{u.email}</div>
-                </div>
-                {u.role === 'admin' ? <Badge tone="accent">Admin</Badge> : <Badge>Todavía no elige su jugador</Badge>}
+                <div className="min-w-0 flex-1 truncate font-medium">{u.name}</div>
+                {u.role !== 'member' ? <Badge tone="accent">{roleLabel(u.role)}</Badge> : <Badge>Todavía no elige su jugador</Badge>}
               </div>
             ))}
           </Card>
@@ -170,7 +153,7 @@ export default function PlayersPage() {
 
       <PlayerFormModal
         player={editing === 'new' ? null : editing}
-        account={editing && editing !== 'new' && editing.uid ? userById.get(editing.uid) ?? null : null}
+        account={editing && editing !== 'new' && editing.uid ? memberByUid.get(editing.uid) ?? null : null}
         open={editing != null}
         stats={editing && editing !== 'new' ? stats.get(editing.id) ?? noStats : noStats}
         onClose={() => setEditing(null)}
@@ -188,10 +171,11 @@ function PlayerFormModal({
 }: {
   open: boolean;
   player: Player | null;
-  account: UserProfile | null;
+  account: Member | null;
   stats: PlayerStats;
   onClose: () => void;
 }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const { confirm } = useFeedback();
   const [name, setName] = useState('');
@@ -208,8 +192,8 @@ function PlayerFormModal({
     e.preventDefault();
     const averageOverride = avg.trim() === '' ? null : Math.min(300, Math.max(0, Math.round(+avg)));
     setBusy(true);
-    if (player) await run(() => updatePlayer(player.id, { name: name.trim(), averageOverride }), 'Jugador actualizado');
-    else await run(() => createPlayer(name, averageOverride), 'Jugador agregado');
+    if (player) await run(() => updatePlayer(lid, player.id, { name: name.trim(), averageOverride }), 'Jugador actualizado');
+    else await run(() => createPlayer(lid, name, averageOverride), 'Jugador agregado');
     setBusy(false);
     onClose();
   }
@@ -224,7 +208,7 @@ function PlayerFormModal({
     });
     if (!ok) return;
     onClose();
-    await run(() => deletePlayer(player.id, player.uid), 'Jugador eliminado');
+    await run(() => deletePlayer(lid, player.id, player.uid), 'Jugador eliminado');
   }
 
   return (
@@ -266,62 +250,41 @@ function PlayerFormModal({
   );
 }
 
-/** Cuenta vinculada al jugador: el admin la desvincula (se eligió mal) o la nombra admin. */
-function AccountSection({ player, account, onDone }: { player: Player; account: UserProfile | null; onDone: () => void }) {
+/** Cuenta vinculada al jugador: un admin la desvincula si se eligió mal. Los roles se cambian en Miembros. */
+function AccountSection({ player, account, onDone }: { player: Player; account: Member | null; onDone: () => void }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const { confirm } = useFeedback();
   if (!player.uid) {
     return (
       <p className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5 text-xs text-muted">
-        Sin cuenta. Puede crear una en “Crear cuenta” y elegirse en la lista para subir sus juegos.
+        Sin cuenta. Quien se una a la liga puede elegirse en la lista para subir sus juegos.
       </p>
     );
   }
-  const fixed = isFixedAdmin(account?.email);
-  const isAdmin = fixed || account?.role === 'admin';
 
   async function unlink() {
     const ok = await confirm({
       title: 'Desvincular cuenta',
-      message: `${account?.email ?? 'La cuenta'} deja de estar vinculada a ${player.name} y podrá elegir su jugador otra vez.`,
+      message: `${account?.name ?? 'La cuenta'} deja de estar vinculada a ${player.name} y podrá elegir su jugador otra vez.`,
       confirmText: 'Desvincular',
       danger: true,
     });
     if (!ok) return;
     onDone();
-    await run(() => unlinkAccount(player.id, player.uid!), 'Cuenta desvinculada');
-  }
-
-  async function toggleAdmin() {
-    if (!account) return;
-    const ok = await confirm({
-      title: isAdmin ? 'Quitar admin' : 'Hacer admin',
-      message: isAdmin
-        ? `${account.email} deja de ver el panel de administración.`
-        : `${account.email} podrá crear eventos, anotar juegos y aprobar envíos.`,
-      confirmText: isAdmin ? 'Quitar' : 'Hacer admin',
-      danger: isAdmin,
-    });
-    if (ok) await run(() => setRole(account.id, isAdmin ? 'jugador' : 'admin'), isAdmin ? 'Ya no es admin' : 'Ahora es admin');
+    await run(() => unlinkAccount(lid, player.id, player.uid!), 'Cuenta desvinculada');
   }
 
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-xl border border-line p-3">
       <div className="flex items-center gap-2 text-sm">
         <BadgeCheck className="size-4 text-ok" />
-        <span className="min-w-0 flex-1 truncate">{account?.email ?? 'Cuenta vinculada'}</span>
-        {isAdmin && <Badge tone="accent">Admin</Badge>}
+        <span className="min-w-0 flex-1 truncate">{account?.name ?? 'Cuenta vinculada'}</span>
+        {account && account.role !== 'member' && <Badge tone="accent">{roleLabel(account.role)}</Badge>}
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" icon={<Unlink className="size-4" />} onClick={unlink}>
-          Desvincular
-        </Button>
-        {account && !fixed && (
-          <Button size="sm" icon={<ShieldCheck className="size-4" />} onClick={toggleAdmin}>
-            {isAdmin ? 'Quitar admin' : 'Hacer admin'}
-          </Button>
-        )}
-      </div>
+      <Button size="sm" className="self-start" icon={<Unlink className="size-4" />} onClick={unlink}>
+        Desvincular
+      </Button>
     </div>
   );
 }

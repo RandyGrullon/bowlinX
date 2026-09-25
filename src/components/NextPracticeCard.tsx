@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { CalendarCheck, CalendarDays, Check, X } from 'lucide-react';
 import { setRsvp } from '../lib/data';
 import { formatDateLong, toIsoDate } from '../lib/format';
+import { useLeagueCtx } from '../lib/league';
 import type { BowlingEvent } from '../lib/types';
 import { useAction } from './feedback';
 import { Button, Card, cx } from './ui';
 
 /** Próxima práctica: el jugador confirma si va (el admin sabe cuántas pistas pedir). */
 export function NextPracticeCard({ events, playerId }: { events: BowlingEvent[]; playerId: string }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const [busy, setBusy] = useState(false);
   const today = toIsoDate(new Date());
@@ -21,7 +23,7 @@ export function NextPracticeCard({ events, playerId }: { events: BowlingEvent[];
 
   async function toggle(value: boolean) {
     setBusy(true);
-    await run(() => setRsvp(next.id, playerId, value), value ? '¡Te esperamos!' : 'Listo, no vas');
+    await run(() => setRsvp(lid, next.id, playerId, value), value ? '¡Te esperamos!' : 'Listo, no vas');
     setBusy(false);
   }
 

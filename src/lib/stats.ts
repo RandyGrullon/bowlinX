@@ -83,6 +83,24 @@ export function rank<T>(rows: T[], value: (r: T) => number): { row: T; pos: numb
   });
 }
 
+/** Valor con el que se ordena la clasificación individual (regla del evento). */
+export function individualValue(event: BowlingEvent) {
+  const isTorneo = event.type === 'torneo';
+  const useHcp = isTorneo && event.hcpPercent > 0 && (event.individualRankBy ?? 'hcp') === 'hcp';
+  return (l: Line) => (isTorneo ? (useHcp ? l.total : l.scratch) : l.avg);
+}
+
+/** Posición de una participación en su evento (solo juegos verificados). */
+export function eventPosition(event: BowlingEvent, entries: Entry[], entryId: string): { pos: number; of: number } | null {
+  const lines = entries
+    .filter((e) => e.eventId === event.id)
+    .map((e) => entryLine(e, event))
+    .filter((l) => l.games > 0);
+  const ranked = rank(lines, individualValue(event));
+  const me = ranked.find((r) => r.row.entry.id === entryId);
+  return me ? { pos: me.pos, of: ranked.length } : null;
+}
+
 export interface TeamLine {
   teamId: string;
   name: string;

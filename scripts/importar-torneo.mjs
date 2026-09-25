@@ -1,9 +1,10 @@
-// Carga un torneo histórico (JSON sacado del Excel) en Firestore.
+// Carga un torneo histórico (JSON sacado del Excel) dentro de una liga.
 // Los juegos quedan verificados como "importado" (resultado auditado, sin foto).
 //
-//   node scripts/importar-torneo.mjs scripts/datos/torneo-2025.json [--reemplazar]
+//   node scripts/importar-torneo.mjs scripts/datos/torneo-2025.json --liga <id-de-la-liga> [--reemplazar]
 //
-// Pide el correo y la contraseña del admin en la terminal (no se guardan).
+// El id de la liga es el que sale en el link: bowlin-x.vercel.app/l/<id>.
+// Pide el correo y la contraseña de un admin de esa liga en la terminal (no se guardan).
 // BOWLINX_EMULADOR=1 lo corre contra los emuladores locales.
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -23,11 +24,14 @@ import {
 } from 'firebase/firestore';
 
 const IMPORTED = 'importado';
-const [file] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-const replace = process.argv.includes('--reemplazar');
+const args = process.argv.slice(2);
+const ligaAt = args.indexOf('--liga');
+const lid = ligaAt >= 0 ? args[ligaAt + 1] : undefined;
+const [file] = args.filter((a, i) => !a.startsWith('--') && i !== ligaAt + 1);
+const replace = args.includes('--reemplazar');
 const emulator = process.env.BOWLINX_EMULADOR === '1';
-if (!file) {
-  console.error('Uso: node scripts/importar-torneo.mjs <archivo.json> [--reemplazar]');
+if (!file || !lid) {
+  console.error('Uso: node scripts/importar-torneo.mjs <archivo.json> --liga <id-de-la-liga> [--reemplazar]');
   process.exit(1);
 }
 
@@ -75,20 +79,29 @@ const email = process.env.BOWLINX_EMAIL || (await ask('Correo del admin [admin@a
 const password = process.env.BOWLINX_PASSWORD || (await ask('Contraseña: ', true));
 await signInWithEmailAndPassword(auth, email, password);
 
-const eventRef = doc(db, 'events', event.id);
+const league = await getDoc(doc(db, 'leagues', lid));
+if (!league.exists()) {
+  console.error(`No existe la liga "${lid}" (o no tienes permiso para verla).`);
+  process.exit(1);
+}
+console.log(`Liga: ${league.get('name')}`);
+const col = (name) => collection(db, 'leagues', lid, name);
+const ref = (name, id) => doc(db, 'leagues', lid, name, id);
+
+const eventRef = ref('events', event.id);
 if ((await getDoc(eventRef)).exists()) {
   if (!replace) {
     console.error(`El evento "${event.id}" ya existe. Usa --reemplazar para volver a cargarlo.`);
     process.exit(1);
   }
-  const old = await getDocs(query(collection(db, 'entries'), where('eventId', '==', event.id)));
+  const old = await getDocs(query(col('entries'), where('eventId', '==', event.id)));
   const b = writeBatch(db);
   old.docs.forEach((d) => b.delete(d.ref));
   await b.commit();
 }
 
 // Reusa jugadores que ya existan con el mismo nombre; crea los que falten.
-const existing = await getDocs(collection(db, 'players'));
+const existing = await getDocs(col('players'));
 const byName = new Map(existing.docs.map((d) => [normalize(d.get('name')), d.id]));
 const batch = writeBatch(db);
 let created = 0;
@@ -103,6 +116,9 @@ batch.set(eventRef, {
   hcpPercent: event.hcpPercent,
   individualRankBy: event.individualRankBy,
   teamRankBy: event.teamRankBy,
+  ...(event.categoryCuts ? { categoryCuts: event.categoryCuts } : {}),
+  teamSize: event.teamSize ?? 3,
+  announcement: '',
   teams: Object.fromEntries(teams.map((t, i) => [teamIds[t], { name: t, order: i + 1 }])),
   playerCount: players.length,
   createdAt: serverTimestamp(),
@@ -111,13 +127,13 @@ batch.set(eventRef, {
 for (const p of players) {
   let playerId = byName.get(normalize(p.name));
   if (!playerId) {
-    playerId = doc(collection(db, 'players')).id;
+    playerId = doc(col('players')).id;
     byName.set(normalize(p.name), playerId);
-    batch.set(doc(db, 'players', playerId), { name: p.name, averageOverride: null, createdAt: serverTimestamp() });
+    batch.set(ref('players', playerId), { name: p.name, averageOverride: null, createdAt: serverTimestamp() });
     created++;
   }
   const formula = Math.max(0, Math.floor(((event.hcpBase - p.average) * event.hcpPercent) / 100));
-  batch.set(doc(db, 'entries', `${event.id}_${playerId}`), {
+  batch.set(ref('entries', `${event.id}_${playerId}`), {
     eventId: event.id,
     playerId,
     teamId: p.team ? teamIds[p.team] : null,

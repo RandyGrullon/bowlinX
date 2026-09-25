@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Inbox, X } from 'lucide-react';
+import { Check, Grid3x3, ImageOff, Inbox, X } from 'lucide-react';
 import { approveSubmission, fetchEffectiveAverages, practiceForDate, rejectSubmission, useAllEntries, useEvents, usePhoto, usePlayers, useSubmissions } from '../lib/data';
 import { eventTitle, formatDate } from '../lib/format';
+import { useLeagueCtx } from '../lib/league';
 import { firstFreeSlot, isValidScore, slots } from '../lib/stats';
 import type { BowlingEvent, Entry, Player, Submission } from '../lib/types';
 import { useAction, useFeedback } from '../components/feedback';
 import { PhotoView } from '../components/PhotoModal';
-import { Avatar } from './PlayersPage';
+import { Avatar } from '../components/Avatar';
+import { FramesGrid } from '../components/frames/FramesGrid';
 import { Badge, Button, Card, Empty, Field, Input, ListSkeleton, LoadError, Modal, Select, Skeleton, cx } from '../components/ui';
 
 export default function ApprovalsPage() {
-  const subs = useSubmissions('pendiente');
-  const events = useEvents();
-  const players = usePlayers();
-  const entries = useAllEntries();
+  const { lid } = useLeagueCtx();
+  const subs = useSubmissions(lid, 'pendiente');
+  const events = useEvents(lid);
+  const players = usePlayers(lid);
+  const entries = useAllEntries(lid);
 
   const sorted = useMemo(
     () => [...subs.data].sort((a, b) => (a.createdAt?.toMillis() ?? 0) - (b.createdAt?.toMillis() ?? 0)),
@@ -23,8 +26,8 @@ export default function ApprovalsPage() {
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Aprobar juegos</h1>
-        <p className="text-sm text-muted">Juegos que los jugadores subieron desde su página con foto. Al aprobarlos cuentan en sus estadísticas.</p>
+        <h2 className="text-lg font-bold tracking-tight">Aprobar juegos</h2>
+        <p className="text-sm text-muted">Juegos que los jugadores subieron desde su perfil. Al aprobarlos cuentan en sus estadísticas.</p>
       </div>
       {subs.error ? (
         <LoadError error={subs.error} />
@@ -69,9 +72,11 @@ function SubmissionCard({
   player?: Player;
   entry: Entry | null;
 }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const { toast } = useFeedback();
-  const photo = usePhoto(sub.photoId);
+  const photo = usePhoto(lid, sub.photoId);
+  const [showFrames, setShowFrames] = useState(false);
   const [values, setValues] = useState<string[]>([]);
   const [start, setStart] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -96,7 +101,7 @@ function SubmissionCard({
     return (
       <Card className="flex items-center justify-between px-4 py-3 text-sm text-muted">
         Envío de un jugador o evento que ya no existe.
-        <Button size="sm" onClick={() => run(() => rejectSubmission(sub, 'Evento o jugador eliminado'))}>
+        <Button size="sm" onClick={() => run(() => rejectSubmission(lid, sub, 'Evento o jugador eliminado'))}>
           Descartar
         </Button>
       </Card>
@@ -115,9 +120,9 @@ function SubmissionCard({
       if (v.trim() !== '' && start + k < games) map[start + k] = Number(v);
     });
     const ok = await run(async () => {
-      const target = event ?? (await practiceForDate(events, sub.date!, count));
-      const average = entry ? entry.average : ((await fetchEffectiveAverages([player])).get(player.id) ?? 0);
-      await approveSubmission(sub, target, entry, average, map);
+      const target = event ?? (await practiceForDate(lid, events, sub.date!, count));
+      const average = entry ? entry.average : ((await fetchEffectiveAverages(lid, [player])).get(player.id) ?? 0);
+      await approveSubmission(lid, sub, target, entry, average, map, start);
       return true;
     });
     setBusy(false);
@@ -126,7 +131,7 @@ function SubmissionCard({
 
   async function reject() {
     setRejecting(false);
-    await run(() => rejectSubmission(sub, note.trim() || null), 'Envío rechazado');
+    await run(() => rejectSubmission(lid, sub, note.trim() || null), 'Envío rechazado');
   }
 
   return (
@@ -142,9 +147,31 @@ function SubmissionCard({
         {sub.createdAt && <span className="hidden text-xs text-muted sm:block">{new Date(sub.createdAt.toMillis()).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}</span>}
       </div>
       <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        {photo.data ? <PhotoView src={photo.data.data} /> : <Skeleton className="h-48 w-full rounded-xl" />}
+        {!sub.photoId ? (
+          <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line text-sm text-muted">
+            <ImageOff className="size-6" /> Sin foto (la liga no la exige)
+          </div>
+        ) : photo.data ? (
+          <PhotoView src={photo.data.data} />
+        ) : (
+          <Skeleton className="h-48 w-full rounded-xl" />
+        )}
         <div className="flex flex-col gap-3">
-          {sub.scanned == null && <Badge tone="warn">La IA no pudo leer la foto: revísala tú</Badge>}
+          {sub.photoId && sub.scanned == null && <Badge tone="warn">La IA no pudo leer la foto: revísala tú</Badge>}
+          {sub.frames && Object.keys(sub.frames).length > 0 && (
+            <div className="flex flex-col gap-2">
+              <Button size="sm" className="self-start" icon={<Grid3x3 className="size-4" />} onClick={() => setShowFrames((v) => !v)}>
+                {showFrames ? 'Ocultar cuadros' : 'Ver cuadros que anotó'}
+              </Button>
+              {showFrames &&
+                Object.entries(sub.frames).map(([k, f]) => (
+                  <div key={k} className="flex flex-col gap-1">
+                    <span className="text-xs text-muted">J{+k + 1}</span>
+                    <FramesGrid rolls={f.rolls} compact />
+                  </div>
+                ))}
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="text-xs text-muted">
               <tr>

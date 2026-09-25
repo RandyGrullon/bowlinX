@@ -160,6 +160,10 @@ dialog[open]::backdrop { animation: fade-in 0.2s ease-out; }
 
 .card-shadow { box-shadow: var(--shadow-card); }
 
+/* Pestañas que se deslizan con el dedo sin mostrar la barra de scroll. */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
 .skeleton {
   position: relative;
   overflow: hidden;

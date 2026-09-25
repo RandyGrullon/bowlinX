@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { RefreshCw, UserPlus, Users, X } from 'lucide-react';
 import { fetchEffectiveAverages, removeEntry, updateEntries, updateEntry } from '../../lib/data';
+import { useLeagueCtx } from '../../lib/league';
 import { calcHandicap, category } from '../../lib/stats';
 import type { BowlingEvent, Entry, Player } from '../../lib/types';
 import { useAction, useFeedback } from '../feedback';
 import { NumberCell } from '../NumberCell';
-import { Avatar } from '../../pages/PlayersPage';
+import { Avatar } from '../Avatar';
 import { Badge, Button, Card, Empty, Select } from '../ui';
 import { CategoryBadge } from './CategoryBadge';
 import { AddPlayersModal } from './AddPlayersModal';
 
 /** Torneo: inscritos con su promedio, handicap y equipo. */
 export function RosterTab({ event, entries, players }: { event: BowlingEvent; entries: Entry[]; players: Player[] }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const { confirm } = useFeedback();
   const [adding, setAdding] = useState(false);
@@ -29,7 +31,7 @@ export function RosterTab({ event, entries, players }: { event: BowlingEvent; en
       confirmText: 'Sacar',
       danger: true,
     });
-    if (ok) await run(() => removeEntry(entry), `${name} fuera del torneo`);
+    if (ok) await run(() => removeEntry(lid, entry), `${name} fuera del torneo`);
   }
 
   async function syncAverages() {
@@ -42,8 +44,8 @@ export function RosterTab({ event, entries, players }: { event: BowlingEvent; en
     if (!ok) return;
     setSyncing(true);
     await run(async () => {
-      const avgs = await fetchEffectiveAverages(entries.map((e) => ({ id: e.playerId, averageOverride: byId.get(e.playerId)?.averageOverride ?? null })));
-      await updateEntries(entries.map((e) => ({ id: e.id, patch: { average: avgs.get(e.playerId) ?? 0 } })));
+      const avgs = await fetchEffectiveAverages(lid, entries.map((e) => ({ id: e.playerId, averageOverride: byId.get(e.playerId)?.averageOverride ?? null })));
+      await updateEntries(lid, entries.map((e) => ({ id: e.id, patch: { average: avgs.get(e.playerId) ?? 0 } })));
     }, 'Promedios actualizados');
     setSyncing(false);
   }
@@ -98,16 +100,22 @@ export function RosterTab({ event, entries, players }: { event: BowlingEvent; en
                     <span className="text-[11px] text-muted md:hidden">Equipo</span>
                     <Select
                       value={e.teamId ?? ''}
-                      onChange={(ev) => run(() => updateEntry(e.id, { teamId: ev.target.value || null }))}
+                      onChange={(ev) => run(() => updateEntry(lid, e.id, { teamId: ev.target.value || null }))}
                       className="h-9 min-w-32"
                       aria-label="Equipo"
                     >
                       <option value="">Sin equipo</option>
-                      {teams.map(([id, t]) => (
-                        <option key={id} value={id}>
-                          {t.name}
-                        </option>
-                      ))}
+                      {teams.map(([id, t]) => {
+                        const size = entries.filter((x) => x.teamId === id).length;
+                        const full = !!event.teamSize && size >= event.teamSize && e.teamId !== id;
+                        return (
+                          <option key={id} value={id} disabled={full}>
+                            {t.name}
+                            {event.teamSize ? ` (${size}/${event.teamSize})` : ''}
+                            {full ? ' · lleno' : ''}
+                          </option>
+                        );
+                      })}
                     </Select>
                   </label>
                   <label className="flex flex-col items-center gap-1 md:contents">
@@ -115,7 +123,7 @@ export function RosterTab({ event, entries, players }: { event: BowlingEvent; en
                     <NumberCell
                       label={`Promedio de ${name}`}
                       value={e.average}
-                      onCommit={(v) => run(() => updateEntry(e.id, { average: v ?? 0 }))}
+                      onCommit={(v) => run(() => updateEntry(lid, e.id, { average: v ?? 0 }))}
                       className="md:justify-self-center"
                     />
                   </label>
@@ -126,7 +134,7 @@ export function RosterTab({ event, entries, players }: { event: BowlingEvent; en
                       value={e.handicapOverride}
                       placeholder={String(auto)}
                       allowEmpty
-                      onCommit={(v) => run(() => updateEntry(e.id, { handicapOverride: v }))}
+                      onCommit={(v) => run(() => updateEntry(lid, e.id, { handicapOverride: v }))}
                     />
                     {e.handicapOverride != null && <Badge className="hidden md:inline-flex">fijo</Badge>}
                   </label>

@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { usePhoto } from '../lib/data';
-import { IMPORTED } from '../lib/types';
+import { useLeagueCtx } from '../lib/league';
+import { IMPORTED, NO_PHOTO } from '../lib/types';
 import { Button, Loading, Modal, cx } from './ui';
 
 export function PhotoView({ src, className }: { src: string; className?: string }) {
@@ -38,8 +39,10 @@ export function PhotoModal({
   title?: ReactNode;
   actions?: ReactNode;
 }) {
+  const { lid } = useLeagueCtx();
   const imported = photoId === IMPORTED;
-  const photo = usePhoto(imported ? null : photoId);
+  const noPhoto = photoId === NO_PHOTO;
+  const photo = usePhoto(lid, imported || noPhoto ? null : photoId);
   return (
     <Modal
       open={photoId != null}
@@ -55,6 +58,8 @@ export function PhotoModal({
     >
       {imported ? (
         <p className="text-sm text-muted">Resultado cargado del Excel del torneo (auditado). No tiene foto.</p>
+      ) : noPhoto ? (
+        <p className="text-sm text-muted">Anotado sin foto: la liga no la exige.</p>
       ) : photo.loading ? (
         <Loading />
       ) : photo.data ? (

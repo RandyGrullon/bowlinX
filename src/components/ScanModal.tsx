@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, Plus, ScanLine, Sparkles, Trash2 } from 'lucide-react';
 import { fetchEffectiveAverages, saveVerifiedGames, type VerifiedWrite } from '../lib/data';
 import type { CompressedImage } from '../lib/image';
+import { useLeagueCtx } from '../lib/league';
 import { bestMatch, firstFreeSlot, isValidScore, slots } from '../lib/stats';
 import type { BowlingEvent, Entry, Player } from '../lib/types';
 import { useAction, useFeedback } from './feedback';
@@ -44,6 +45,7 @@ export function ScanModal({
   players: Player[];
   focusPlayerId?: string | null;
 }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const { toast } = useFeedback();
   const [photo, setPhoto] = useState<CompressedImage | null>(null);
@@ -89,7 +91,7 @@ export function ScanModal({
     setScanning(true);
     const { scanScoreboard, ScanError } = await import('../lib/scan');
     try {
-      const found = await scanScoreboard(img.data);
+      const found = await scanScoreboard(img.scan);
       const used = new Set<string>();
       const next = found.map((r) => {
         const match = bestMatch(r.name, participants.filter((p) => !used.has(p.id))) ?? bestMatch(r.name, others.filter((p) => !used.has(p.id)));
@@ -135,7 +137,7 @@ export function ScanModal({
     if (!photo || problems.length || !gamesToSave) return;
     setSaving(true);
     const newcomers = included.filter((r) => !entryOf(r.playerId)).map((r) => players.find((p) => p.id === r.playerId)!);
-    const averages = newcomers.length ? await fetchEffectiveAverages(newcomers) : new Map<string, number>();
+    const averages = newcomers.length ? await fetchEffectiveAverages(lid, newcomers) : new Map<string, number>();
     const writes: VerifiedWrite[] = included.map((r) => {
       const values: Record<number, number> = {};
       r.values.forEach((v, k) => {
@@ -143,7 +145,7 @@ export function ScanModal({
       });
       return { entry: entryOf(r.playerId), playerId: r.playerId, average: averages.get(r.playerId) ?? 0, values };
     });
-    const ok = await run(() => saveVerifiedGames(event, photo, writes));
+    const ok = await run(() => saveVerifiedGames(lid, event, photo, writes));
     setSaving(false);
     if (ok) {
       toast(`${gamesToSave} ${gamesToSave === 1 ? 'juego verificado' : 'juegos verificados'}`);

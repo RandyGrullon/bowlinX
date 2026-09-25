@@ -4,12 +4,15 @@ import { isValidScore } from '../lib/stats';
 import { cx } from './ui';
 
 /**
- * Casilla de pinos de un juego. Guarda al salir (blur/Enter) como borrador.
- * Si el juego ya está verificado con foto, queda bloqueada y muestra el check.
+ * Casilla de pinos de un juego. Guarda al salir (blur/Enter).
+ * - Verificado con foto: bloqueada, muestra el check y abre la foto.
+ * - `counted` (liga sin foto obligatoria): cuenta tal cual y se puede corregir.
+ * - Si no: borrador (vista previa) hasta verificarlo.
  */
 export function ScoreInput({
   value,
   verified,
+  counted,
   row,
   col,
   onCommit,
@@ -18,6 +21,7 @@ export function ScoreInput({
 }: {
   value: number | null;
   verified: boolean;
+  counted?: boolean;
   row: number;
   col: number;
   onCommit: (v: number | null) => void;
@@ -71,6 +75,7 @@ export function ScoreInput({
     }
   }
 
+  const draftStyle = value != null && !counted;
   return (
     <div className="relative w-full min-w-14">
       <input
@@ -95,12 +100,10 @@ export function ScoreInput({
         className={cx(
           'h-10 w-full rounded-lg border bg-surface text-center text-base font-medium tabular-nums sm:text-sm',
           'focus:outline-none focus:ring-2 focus:ring-accent/40',
-          invalid ? 'border-danger text-danger' : value != null ? 'border-dashed border-warn text-fg' : 'border-line',
+          invalid ? 'border-danger text-danger' : draftStyle ? 'border-dashed border-warn text-fg' : value != null ? 'border-line font-semibold' : 'border-line',
         )}
       />
-      {value != null && !focused && (
-        <Camera className="pointer-events-none absolute top-0.5 right-0.5 size-3 text-warn" aria-label="Falta foto" />
-      )}
+      {draftStyle && !focused && <Camera className="pointer-events-none absolute top-0.5 right-0.5 size-3 text-warn" aria-label="Falta foto" />}
     </div>
   );
 }

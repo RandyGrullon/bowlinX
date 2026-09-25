@@ -1,45 +1,37 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
-import { lazy, Suspense, type ReactNode } from 'react';
-import { AuthProvider, useAuth } from './lib/auth';
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router';
+import { lazy, Suspense } from 'react';
+import { AuthProvider } from './lib/auth';
 import { badConfig, firebaseConfigured } from './lib/firebase';
+import { useLeagueCtx } from './lib/league';
 import { FeedbackProvider } from './components/feedback';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PwaPrompts } from './components/PwaPrompts';
-import { Loading, TopLoader } from './components/ui';
+import { TopLoader } from './components/ui';
 
-// Cada pantalla se descarga al entrar: la página pública del jugador no carga el panel del admin.
-const AdminLayout = lazy(() => import('./components/AdminLayout'));
+// Cada pantalla se descarga al entrar: quien solo mira la clasificación no carga el panel del admin.
+const LeagueShell = lazy(() => import('./components/LeagueShell'));
+const HomePage = lazy(() => import('./pages/HomePage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
-const EventsPage = lazy(() => import('./pages/EventsPage'));
+const LeaguesPage = lazy(() => import('./pages/LeaguesPage'));
+const JoinPage = lazy(() => import('./pages/JoinPage'));
+const AccountPage = lazy(() => import('./pages/AccountPage'));
+const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage'));
+const LeagueHome = lazy(() => import('./pages/LeagueHomePage'));
 const EventPage = lazy(() => import('./pages/EventPage'));
-const PlayersPage = lazy(() => import('./pages/PlayersPage'));
-const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
 const PlayerPage = lazy(() => import('./pages/PlayerPage'));
-const MyProfilePage = lazy(() => import('./pages/MyProfilePage'));
-const PublicEventPage = lazy(() => import('./pages/PublicEventPage'));
+const LeagueProfilePage = lazy(() => import('./pages/LeagueProfilePage'));
 const RankingPage = lazy(() => import('./pages/RankingPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
 
-function useLoginRedirect() {
-  const location = useLocation();
-  return `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+/** Un torneo sin liga no tiene ranking de temporada: vuelve al torneo. */
+function LeagueRanking() {
+  const { league, base } = useLeagueCtx();
+  return league.kind === 'torneo' ? <Navigate to={base} replace /> : <RankingPage />;
 }
 
-/** Panel: solo admins. Un jugador con sesión va a su perfil. */
-function RequireAdmin({ children }: { children: ReactNode }) {
-  const { user, isAdmin, loading } = useAuth();
-  const toLogin = useLoginRedirect();
-  if (loading) return <Loading />;
-  if (!user) return <Navigate to={toLogin} replace />;
-  if (!isAdmin) return <Navigate to="/mi" replace />;
-  return <>{children}</>;
-}
-
-function RequireUser({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  const toLogin = useLoginRedirect();
-  if (loading) return <Loading />;
-  if (!user) return <Navigate to={toLogin} replace />;
-  return <>{children}</>;
+function PlayerRoute() {
+  const { playerId } = useParams();
+  return <PlayerPage key={playerId} />;
 }
 
 function MissingConfig() {
@@ -71,31 +63,20 @@ export default function App() {
           <BrowserRouter>
             <Suspense fallback={<TopLoader />}>
               <Routes>
+                <Route index element={<HomePage />} />
                 <Route path="/login" element={<LoginPage />} />
-                <Route path="/j/:playerId" element={<PlayerPage />} />
-                <Route path="/e/:eventId" element={<PublicEventPage />} />
-                <Route path="/ranking" element={<RankingPage />} />
-                <Route
-                  path="/mi"
-                  element={
-                    <RequireUser>
-                      <MyProfilePage />
-                    </RequireUser>
-                  }
-                />
-                <Route
-                  element={
-                    <RequireAdmin>
-                      <AdminLayout />
-                    </RequireAdmin>
-                  }
-                >
-                  <Route index element={<Navigate to="/torneos" replace />} />
-                  <Route path="/torneos" element={<EventsPage type="torneo" />} />
-                  <Route path="/practicas" element={<EventsPage type="practica" />} />
-                  <Route path="/jugadores" element={<PlayersPage />} />
-                  <Route path="/aprobaciones" element={<ApprovalsPage />} />
-                  <Route path="/eventos/:eventId" element={<EventPage />} />
+                <Route path="/ligas" element={<LeaguesPage />} />
+                <Route path="/unirse/:code" element={<JoinPage />} />
+                <Route path="/perfil" element={<AccountPage />} />
+                <Route path="/superadmin" element={<SuperAdminPage />} />
+                <Route path="/l/:lid" element={<LeagueShell />}>
+                  <Route index element={<LeagueHome />} />
+                  <Route path="ranking" element={<LeagueRanking />} />
+                  <Route path="perfil" element={<LeagueProfilePage />} />
+                  <Route path="admin" element={<AdminPage />} />
+                  <Route path="e/:eventId" element={<EventPage />} />
+                  <Route path="j/:playerId" element={<PlayerRoute />} />
+                  <Route path="*" element={<Navigate to="." replace />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

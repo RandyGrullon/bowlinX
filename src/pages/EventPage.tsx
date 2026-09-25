@@ -1,30 +1,58 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { ArrowLeft, CalendarDays, ClipboardList, FileSpreadsheet, ListOrdered, Settings, Share2, Shield, Trash2, Trophy, Users } from 'lucide-react';
-import { deleteEvent, useEvent, useEventEntries, usePlayers } from '../lib/data';
-import { eventLabel, formatDateLong, typeLabel } from '../lib/format';
+import {
+  ArrowLeft,
+  CalendarDays,
+  ClipboardList,
+  FileSpreadsheet,
+  ListOrdered,
+  Megaphone,
+  Settings,
+  Share2,
+  Shield,
+  Trash2,
+  Trophy,
+  Upload,
+  UserRound,
+  Users,
+} from 'lucide-react';
+import { deleteEvent, useEvent, useEventEntries, useEvents, usePlayers } from '../lib/data';
+import { eventLabel, formatDateLong, toIsoDate, typeLabel } from '../lib/format';
+import { useLeagueCtx } from '../lib/league';
+import { Announcements } from '../components/AnnouncementCard';
 import { EventFormModal } from '../components/EventFormModal';
+import { SubmitGamesModal } from '../components/SubmitGamesModal';
 import { useAction, useFeedback } from '../components/feedback';
-import { Badge, Button, Empty, ListSkeleton, LoadError, PageSkeleton, Tabs } from '../components/ui';
+import { Badge, Button, Card, Empty, ListSkeleton, LoadError, PageSkeleton, Tabs } from '../components/ui';
 import { shareLink } from '../components/share';
+import { GameDetailModal } from '../components/event/GameDetailModal';
 import { GamesTab } from '../components/event/GamesTab';
 import { RosterTab } from '../components/event/RosterTab';
 import { StandingsTab } from '../components/event/StandingsTab';
 import { TeamsTab } from '../components/event/TeamsTab';
+import type { Entry } from '../lib/types';
 
 type TabKey = 'inscritos' | 'equipos' | 'juegos' | 'clasificacion';
 
-export default function EventPage() {
-  const { eventId } = useParams();
+/** Un torneo o una práctica. El admin lo maneja todo; los demás lo ven (clasificación en vivo y sus juegos). */
+export default function EventPage({ eventId: fixed }: { eventId?: string }) {
+  const params0 = useParams();
+  const eventId = fixed ?? params0.eventId;
+  const { lid, base, isAdmin, myPlayerId, league } = useLeagueCtx();
+  // Torneo sin liga: el evento es la portada, no hay a dónde volver.
+  const standalone = league.kind === 'torneo';
   const navigate = useNavigate();
   const run = useAction();
   const { confirm, toast } = useFeedback();
   const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const event = useEvent(eventId);
-  const entries = useEventEntries(eventId);
-  const players = usePlayers();
+  const [detail, setDetail] = useState<Entry | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const event = useEvent(lid, eventId);
+  const entries = useEventEntries(lid, eventId);
+  const players = usePlayers(lid);
+  const events = useEvents(myPlayerId ? lid : undefined);
 
   const loadError = event.error ?? entries.error ?? players.error;
   if (loadError) return <LoadError error={loadError} />;
@@ -32,7 +60,7 @@ export default function EventPage() {
   if (!event.data) {
     return (
       <Empty title="Este evento no existe">
-        <Link to="/torneos" className="text-accent">
+        <Link to={base} className="text-accent">
           Volver
         </Link>
       </Empty>
@@ -41,20 +69,27 @@ export default function EventPage() {
 
   const ev = event.data;
   const isTorneo = ev.type === 'torneo';
-  const tabs: { key: TabKey; label: string; icon: ReactNode }[] = isTorneo
-    ? [
-        { key: 'inscritos', label: 'Inscritos', icon: <Users className="size-4" /> },
-        { key: 'equipos', label: 'Equipos', icon: <Shield className="size-4" /> },
-        { key: 'juegos', label: 'Juegos', icon: <ClipboardList className="size-4" /> },
-        { key: 'clasificacion', label: 'Clasificación', icon: <ListOrdered className="size-4" /> },
-      ]
-    : [
-        { key: 'juegos', label: 'Juegos', icon: <ClipboardList className="size-4" /> },
-        { key: 'clasificacion', label: 'Resultados', icon: <ListOrdered className="size-4" /> },
-      ];
+  const back = isTorneo ? base : `${base}?ver=practicas`;
+  const mine = myPlayerId ? entries.data.find((e) => e.playerId === myPlayerId) ?? null : null;
+  const nameOf = (e: Entry) => players.data.find((p) => p.id === e.playerId)?.name ?? '(jugador borrado)';
+  const me = myPlayerId ? players.data.find((p) => p.id === myPlayerId) : undefined;
+  const upcoming = ev.date >= toIsoDate(new Date());
+
+  const tabs: { key: TabKey; label: string; icon: ReactNode }[] = !isAdmin
+    ? []
+    : isTorneo
+      ? [
+          { key: 'inscritos', label: 'Inscritos', icon: <Users className="size-4" /> },
+          { key: 'equipos', label: 'Equipos', icon: <Shield className="size-4" /> },
+          { key: 'juegos', label: 'Juegos', icon: <ClipboardList className="size-4" /> },
+          { key: 'clasificacion', label: 'Clasificación', icon: <ListOrdered className="size-4" /> },
+        ]
+      : [
+          { key: 'juegos', label: 'Juegos', icon: <ClipboardList className="size-4" /> },
+          { key: 'clasificacion', label: 'Resultados', icon: <ListOrdered className="size-4" /> },
+        ];
   const requested = params.get('tab') as TabKey | null;
-  const tab = tabs.some((t) => t.key === requested) ? requested! : tabs[0].key;
-  const back = isTorneo ? '/torneos' : '/practicas';
+  const tab: TabKey = isAdmin ? (tabs.some((t) => t.key === requested) ? requested! : tabs[0].key) : 'clasificacion';
 
   async function remove() {
     const ok = await confirm({
@@ -65,8 +100,8 @@ export default function EventPage() {
     });
     if (!ok) return;
     setEditing(false);
-    navigate(back);
-    await run(() => deleteEvent(ev.id), 'Evento eliminado');
+    navigate(standalone ? `${base}/admin?tab=liga` : back);
+    await run(() => deleteEvent(lid, ev.id), 'Evento eliminado');
   }
 
   const props = { event: ev, entries: entries.data, players: players.data };
@@ -74,9 +109,11 @@ export default function EventPage() {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-start gap-3">
-        <Link to={back} className="mt-1 rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-fg" aria-label="Volver">
-          <ArrowLeft className="size-5" />
-        </Link>
+        {!standalone && (
+          <Link to={back} className="mt-1 rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-fg" aria-label="Volver">
+            <ArrowLeft className="size-5" />
+          </Link>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="truncate text-xl font-bold tracking-tight">{eventLabel(ev)}</h1>
@@ -84,41 +121,72 @@ export default function EventPage() {
               {isTorneo ? <Trophy className="size-3" /> : <CalendarDays className="size-3" />}
               {typeLabel(ev.type)}
             </Badge>
+            {!isAdmin && entries.data.some((e) => e.scores?.some((s, i) => s != null && e.photos?.[i] != null)) && (
+              <Badge tone="ok">
+                <span className="live-dot" /> En vivo
+              </Badge>
+            )}
           </div>
           <p className="text-sm text-muted first-letter:uppercase">
             {formatDateLong(ev.date)} · {ev.games} juegos
             {isTorneo && (ev.hcpPercent > 0 ? ` · Hcp ${ev.hcpPercent}% de ${ev.hcpBase}` : ' · Sin handicap')}
+            {isTorneo && !!ev.teamSize && ` · Equipos de ${ev.teamSize}`}
           </p>
         </div>
         <Button
           variant="ghost"
           onClick={async () => {
-            if (await shareLink(`${location.origin}/e/${ev.id}`, `${eventLabel(ev)} · BowlinX`)) toast('Link de la clasificación copiado');
+            if (await shareLink(location.href.split('?')[0], `${eventLabel(ev)} · BowlinX`)) toast('Link copiado');
           }}
-          aria-label="Compartir clasificación"
-          title="Compartir clasificación pública"
+          aria-label="Compartir"
+          title="Compartir"
           icon={<Share2 className="size-5" />}
         />
-        <Button
-          variant="ghost"
-          loading={exporting}
-          onClick={async () => {
-            setExporting(true);
-            await run(async () => {
-              const { exportEventToExcel } = await import('../lib/exportExcel');
-              await exportEventToExcel(ev, entries.data, players.data);
-              return true;
-            }, 'Excel descargado');
-            setExporting(false);
-          }}
-          aria-label="Exportar a Excel"
-          title="Exportar a Excel"
-          icon={<FileSpreadsheet className="size-5" />}
-        />
-        <Button variant="ghost" onClick={() => setEditing(true)} aria-label="Configurar" title="Configurar" icon={<Settings className="size-5" />} />
+        {isAdmin && (
+          <>
+            <Button
+              variant="ghost"
+              loading={exporting}
+              onClick={async () => {
+                setExporting(true);
+                await run(async () => {
+                  const { exportEventToExcel } = await import('../lib/exportExcel');
+                  await exportEventToExcel(ev, entries.data, players.data);
+                  return true;
+                }, 'Excel descargado');
+                setExporting(false);
+              }}
+              aria-label="Exportar a Excel"
+              title="Exportar a Excel"
+              icon={<FileSpreadsheet className="size-5" />}
+            />
+            <Button variant="ghost" onClick={() => setEditing(true)} aria-label="Configurar" title="Configurar" icon={<Settings className="size-5" />} />
+          </>
+        )}
       </div>
 
-      <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />
+      {isTorneo && upcoming && (standalone ? (
+        <Announcements events={[ev]} hideLink />
+      ) : (
+        ev.announcement?.trim() && (
+          <Card className="flex gap-3 border-accent/30 bg-accent-soft/40 p-3 text-sm">
+            <Megaphone className="mt-0.5 size-4 shrink-0 text-accent" />
+            <p className="whitespace-pre-line">{ev.announcement.trim()}</p>
+          </Card>
+        )
+      ))}
+
+      {/* Observador con jugador: su juego primero. */}
+      {!isAdmin && myPlayerId && (
+        <MyGameCard
+          hasEntry={!!mine}
+          onOpen={() => mine && setDetail(mine)}
+          onUpload={() => setSubmitting(true)}
+          summary={mine && mine.scores?.some((s) => s != null) ? mine.scores.map((s) => s ?? '–').join(' · ') : null}
+        />
+      )}
+
+      {isAdmin && <Tabs items={tabs} active={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />}
 
       {entries.loading || players.loading ? (
         <ListSkeleton rows={6} />
@@ -132,17 +200,68 @@ export default function EventPage() {
           ) : tab === 'juegos' ? (
             <GamesTab {...props} />
           ) : (
-            <StandingsTab {...props} />
+            <StandingsTab {...props} readOnly={!isAdmin} onOpen={setDetail} />
           )}
         </div>
       )}
 
-      <EventFormModal open={editing} onClose={() => setEditing(false)} type={ev.type} event={ev} />
-      <div className="flex justify-center pt-4">
-        <Button variant="ghost" className="text-danger" icon={<Trash2 className="size-4" />} onClick={remove}>
-          Eliminar {isTorneo ? 'torneo' : 'práctica'}
-        </Button>
-      </div>
+      {isAdmin && (
+        <>
+          <EventFormModal open={editing} onClose={() => setEditing(false)} type={ev.type} event={ev} />
+          <div className="flex justify-center pt-4">
+            <Button variant="ghost" className="text-danger" icon={<Trash2 className="size-4" />} onClick={remove}>
+              Eliminar {isTorneo ? 'torneo' : 'práctica'}
+            </Button>
+          </div>
+        </>
+      )}
+
+      <GameDetailModal
+        event={ev}
+        entries={entries.data}
+        entry={detail ? entries.data.find((e) => e.id === detail.id) ?? detail : null}
+        name={detail ? nameOf(detail) : ''}
+        onClose={() => setDetail(null)}
+      />
+      {me && (
+        <SubmitGamesModal
+          open={submitting}
+          onClose={() => setSubmitting(false)}
+          player={me}
+          events={events.data}
+          myEntries={mine ? [mine] : []}
+          preferEventId={ev.id}
+        />
+      )}
     </div>
+  );
+}
+
+function MyGameCard({
+  hasEntry,
+  summary,
+  onOpen,
+  onUpload,
+}: {
+  hasEntry: boolean;
+  summary: string | null;
+  onOpen: () => void;
+  onUpload: () => void;
+}) {
+  return (
+    <Card className="flex items-center gap-3 p-3">
+      <button type="button" onClick={onOpen} disabled={!hasEntry} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+          <UserRound className="size-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Mi juego</p>
+          <p className="truncate text-xs text-muted tabular-nums">{summary ?? (hasEntry ? 'Estás inscrito · sin juegos todavía' : 'Todavía no tienes juegos aquí')}</p>
+        </div>
+      </button>
+      <Button size="sm" icon={<Upload className="size-4" />} onClick={onUpload}>
+        Subir
+      </Button>
+    </Card>
   );
 }

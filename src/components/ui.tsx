@@ -293,8 +293,17 @@ export function Tabs<K extends string>({
   active: K;
   onChange: (k: K) => void;
 }) {
+  const bar = useRef<HTMLDivElement>(null);
+  // La pestaña activa siempre a la vista (en el celular no caben todas).
+  useEffect(() => {
+    const el = bar.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    const box = bar.current;
+    if (!el || !box) return;
+    const left = el.offsetLeft - box.offsetLeft;
+    if (left < box.scrollLeft || left + el.offsetWidth > box.scrollLeft + box.clientWidth) box.scrollTo({ left: left - 16 });
+  }, [active]);
   return (
-    <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+    <div ref={bar} className="no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
       <div role="tablist" className="inline-flex min-w-full gap-1 rounded-xl bg-surface-2 p-1 sm:min-w-0">
         {items.map((it) => (
           <button

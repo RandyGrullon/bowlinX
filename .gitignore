@@ -9,3 +9,4 @@ ui-debug.log
 .vercel
 .DS_Store
 scripts/datos/
+.claude/

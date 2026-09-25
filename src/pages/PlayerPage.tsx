@@ -1,30 +1,35 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router';
-import { CalendarDays, Camera, CheckCircle2, ChevronRight, Clock, Flame, Hash, Layers, Target, Trophy, Upload, UserPlus, XCircle } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router';
+import { CalendarDays, Camera, CheckCircle2, ChevronRight, Clock, Flame, Hash, Layers, LogOut, Share2, Target, Trophy, Upload, UserPlus, XCircle } from 'lucide-react';
+import { frameStats } from '../lib/bowling';
 import { useAuth } from '../lib/auth';
-import { useEntriesOfEvents, useEvents, usePlayer, usePlayerEntries, usePlayerSubmissions } from '../lib/data';
+import { removeMember, useEntriesOfEvents, useEvents, usePlayer, usePlayerEntries, usePlayerSubmissions } from '../lib/data';
 import { eventLabel, formatDate, formatDateLong } from '../lib/format';
-import { effectiveAverage, entryLine, playerStats, rank } from '../lib/stats';
+import { rememberLeague, useLeagueCtx } from '../lib/league';
+import { effectiveAverage, entryLine, eventPosition, playerStats } from '../lib/stats';
 import type { BowlingEvent, Entry } from '../lib/types';
 import { ScoreChart, type ChartPoint } from '../components/ScoreChart';
 import { SubmitGamesModal } from '../components/SubmitGamesModal';
 import { NextPracticeCard } from '../components/NextPracticeCard';
-import { useFeedback } from '../components/feedback';
+import { useAction, useFeedback } from '../components/feedback';
 import { playerUrl, shareLink } from '../components/share';
 import { Badge, Button, Card, Empty, ListSkeleton, LoadError, Skeleton, StatsSkeleton, cx } from '../components/ui';
-import { PublicShell } from '../components/PublicShell';
 import { Stat } from '../components/event/StandingsTab';
-import { Avatar } from './PlayersPage';
+import { Avatar } from '../components/Avatar';
 
-/** Página pública del jugador (sin login): sus números, torneos y prácticas. */
-export default function PlayerPage() {
-  const { playerId } = useParams();
-  const { user, profile } = useAuth();
-  const { toast } = useFeedback();
-  const player = usePlayer(playerId);
-  const entries = usePlayerEntries(playerId);
-  const events = useEvents();
-  const subs = usePlayerSubmissions(playerId);
+/** Página del jugador en la liga: sus números, torneos y prácticas. En una liga pública se ve sin login. */
+export default function PlayerPage({ playerId: own }: { playerId?: string }) {
+  const params = useParams();
+  const playerId = own ?? params.playerId;
+  const { lid, base, myPlayerId, member } = useLeagueCtx();
+  const { user } = useAuth();
+  const { toast, confirm } = useFeedback();
+  const run = useAction();
+  const navigate = useNavigate();
+  const player = usePlayer(lid, playerId);
+  const entries = usePlayerEntries(lid, playerId);
+  const events = useEvents(lid);
+  const subs = usePlayerSubmissions(lid, playerId);
   const [submitting, setSubmitting] = useState(false);
 
   const eventById = useMemo(() => new Map(events.data.map((e) => [e.id, e])), [events.data]);
@@ -36,19 +41,13 @@ export default function PlayerPage() {
     [entries.data, eventById],
   );
   const tournamentIds = mine.filter((e) => eventById.get(e.eventId)!.type === 'torneo').map((e) => e.eventId);
-  const tournamentEntries = useEntriesOfEvents(tournamentIds);
+  const tournamentEntries = useEntriesOfEvents(lid, tournamentIds);
 
   const loadError = player.error ?? entries.error ?? events.error;
-  if (loadError) {
-    return (
-      <PublicShell>
-        <LoadError error={loadError} />
-      </PublicShell>
-    );
-  }
+  if (loadError) return <LoadError error={loadError} />;
   if (player.loading || entries.loading || events.loading) {
     return (
-      <PublicShell>
+      <>
         <div className="flex flex-col gap-6" aria-busy="true">
           <div className="flex items-center gap-4">
             <Skeleton className="size-16 rounded-full" />
@@ -61,20 +60,14 @@ export default function PlayerPage() {
           <Skeleton className="h-52 w-full rounded-2xl" />
           <ListSkeleton rows={3} />
         </div>
-      </PublicShell>
+      </>
     );
   }
-  if (!player.data) {
-    return (
-      <PublicShell>
-        <Empty title="Este jugador no existe">Revisa el link que te compartieron.</Empty>
-      </PublicShell>
-    );
-  }
+  if (!player.data) return <Empty title="Este jugador no existe">Revisa el link que te compartieron.</Empty>;
 
   const p = player.data;
-  // Solo el dueño del perfil sube juegos y ve sus envíos; el admin anota desde el panel.
-  const isOwner = !!profile?.playerId && profile.playerId === p.id;
+  // Solo el dueño del perfil sube juegos y ve sus envíos; el admin anota desde el evento.
+  const isOwner = !!myPlayerId && myPlayerId === p.id;
   const unclaimed = !p.uid;
   const stats = playerStats(mine);
   const average = effectiveAverage(p, stats);
@@ -104,22 +97,41 @@ export default function PlayerPage() {
     .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0))
     .slice(0, 6);
 
+  // Strikes y spares de los juegos anotados por cuadros (y verificados).
+  const framed = mine.flatMap((e) =>
+    Object.entries(e.frames ?? {})
+      .filter(([i]) => e.scores?.[+i] != null && e.photos?.[+i] != null)
+      .map(([, f]) => frameStats(f.rolls)),
+  );
+  const framesTotal = framed.reduce((a, f) => ({ strikes: a.strikes + f.strikes, spares: a.spares + f.spares }), { strikes: 0, spares: 0 });
+
   async function share() {
-    if (await shareLink(playerUrl(p.id), `${p.name} · BowlinX`)) toast('Link copiado');
+    if (await shareLink(playerUrl(lid, p.id), `${p.name} · BowlinX`)) toast('Link copiado');
   }
 
-  function tournamentRank(ev: BowlingEvent, entry: Entry) {
-    const all = tournamentEntries.data.filter((e) => e.eventId === ev.id).map((e) => entryLine(e, ev)).filter((l) => l.games > 0);
-    const useHcp = ev.hcpPercent > 0 && (ev.individualRankBy ?? 'hcp') === 'hcp';
-    const ranked = rank(all, (l) => (useHcp ? l.total : l.scratch));
-    const me = ranked.find((r) => r.row.entry.id === entry.id);
-    return me ? { pos: me.pos, of: ranked.length } : null;
+  async function leave() {
+    if (!member) return;
+    const ok = await confirm({
+      title: 'Salir de la liga',
+      message: 'Tus juegos se quedan en la liga; tu cuenta deja de estar vinculada a este jugador. Para volver necesitas unirte otra vez.',
+      confirmText: 'Salir',
+      danger: true,
+    });
+    if (!ok) return;
+    const done = await run(async () => {
+      await removeMember(member);
+      return true;
+    }, 'Saliste de la liga');
+    if (done) {
+      rememberLeague(null);
+      navigate('/ligas');
+    }
   }
 
   return (
-    <PublicShell onShare={share}>
-      <div className="animate-fade-up flex flex-col gap-6">
-        <div className="relative flex flex-col items-center gap-3 overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-accent-soft via-surface to-surface p-5 text-center sm:flex-row sm:text-left">
+    <>
+      <div className="flex flex-col gap-6">
+        <div className="relative flex flex-col items-center gap-3 overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-accent-soft via-surface to-surface p-5 text-center sm:flex-row sm:pr-14 sm:text-left">
           <Avatar name={p.name} className="size-16 text-xl ring-4 ring-surface" />
           <div className="flex-1">
             <h1 className="text-2xl font-bold tracking-tight">{p.name}</h1>
@@ -132,9 +144,10 @@ export default function PlayerPage() {
               Subir juegos
             </Button>
           )}
+          <Button variant="ghost" size="sm" className="absolute top-3 right-3" onClick={share} aria-label="Compartir perfil" title="Compartir perfil" icon={<Share2 className="size-4" />} />
           {!user && unclaimed && (
             <Link
-              to={`/login?modo=registro&next=${encodeURIComponent('/mi')}`}
+              to={`/login?modo=registro&next=${encodeURIComponent(`${base}/perfil`)}`}
               className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-line px-4 text-sm font-medium hover:bg-surface-2 sm:w-auto"
             >
               <UserPlus className="size-4" /> ¿Eres tú? Crea tu cuenta
@@ -148,6 +161,14 @@ export default function PlayerPage() {
           <Stat icon={<Flame className="size-4" />} label="Mejor juego" value={stats.high || '—'} />
           <Stat icon={<Layers className="size-4" />} label="Mejor serie (3)" value={stats.highSeries || '—'} />
         </div>
+
+        {framed.length > 0 && (
+          <p className="-mt-3 flex flex-wrap gap-2 text-xs text-muted">
+            <Badge tone="accent">{framesTotal.strikes} strikes</Badge>
+            <Badge tone="accent">{framesTotal.spares} spares</Badge>
+            <span className="self-center">en {framed.length} juegos anotados por cuadros</span>
+          </p>
+        )}
 
         {isOwner && <NextPracticeCard events={events.data} playerId={p.id} />}
 
@@ -209,7 +230,7 @@ export default function PlayerPage() {
             tournaments.map((e) => {
               const ev = eventById.get(e.eventId)!;
               const line = entryLine(e, ev);
-              const r = tournamentRank(ev, e);
+              const r = eventPosition(ev, tournamentEntries.data, e.id);
               const team = e.teamId ? ev.teams?.[e.teamId]?.name : null;
               return (
                 <Card key={e.id} className="p-4">
@@ -232,7 +253,7 @@ export default function PlayerPage() {
                     )}
                   </div>
                   <GameChips entry={e} event={ev} />
-                  <Link to={`/e/${ev.id}`} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-accent">
+                  <Link to={`${base}/e/${ev.id}`} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-accent">
                     Ver clasificación <ChevronRight className="size-4" />
                   </Link>
                   <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
@@ -269,7 +290,7 @@ export default function PlayerPage() {
                 const ev = eventById.get(e.eventId)!;
                 const line = entryLine(e, ev);
                 return (
-                  <div key={e.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+                  <Link key={e.id} to={`${base}/e/${ev.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition hover:bg-surface-2">
                     <div className="min-w-32 flex-1">
                       <div className="font-medium first-letter:uppercase">{formatDate(ev.date)}</div>
                       <GameChips entry={e} event={ev} compact />
@@ -278,7 +299,7 @@ export default function PlayerPage() {
                       <div className="text-lg font-bold tabular-nums">{line.avg || '—'}</div>
                       <div className="text-xs text-muted">promedio</div>
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
             </Card>
@@ -315,10 +336,17 @@ export default function PlayerPage() {
             </Card>
           </section>
         )}
+        {isOwner && member && member.role !== 'owner' && (
+          <div className="flex justify-center">
+            <Button variant="ghost" size="sm" className="text-muted" icon={<LogOut className="size-4" />} onClick={leave}>
+              Salir de la liga
+            </Button>
+          </div>
+        )}
       </div>
 
       <SubmitGamesModal open={submitting} onClose={() => setSubmitting(false)} player={p} events={events.data} myEntries={mine} />
-    </PublicShell>
+    </>
   );
 }
 

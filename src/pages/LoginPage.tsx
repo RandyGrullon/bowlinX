@@ -43,7 +43,7 @@ function PasswordInput({
 }
 
 export default function LoginPage() {
-  const { user, isAdmin, loading } = useAuth();
+  const { user, loading } = useAuth();
   const [params, setParams] = useSearchParams();
   const mode: Mode = params.get('modo') === 'registro' ? 'registro' : 'entrar';
   const [name, setName] = useState('');
@@ -56,9 +56,9 @@ export default function LoginPage() {
   // Mientras se crea la cuenta no se redirige: el perfil (users/{uid}) todavía se está guardando.
   if (user && !busy) {
     if (loading) return <Loading />;
+    // Vuelve a donde estaba (solo rutas internas); si no, a su liga.
     const next = params.get('next');
-    // Los jugadores no entran al panel: van a su perfil (o a la página pública que venían viendo).
-    return <Navigate to={isAdmin ? next || '/torneos' : next?.startsWith('/j/') || next?.startsWith('/e/') ? next : '/mi'} replace />;
+    return <Navigate to={next?.startsWith('/') && !next.startsWith('//') ? next : '/'} replace />;
   }
 
   const mismatch = mode === 'registro' && password2 !== '' && password !== password2;

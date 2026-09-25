@@ -1,29 +1,29 @@
 # BowlinX
 
-Torneos y prácticas de boliche: jugadores, equipos, promedio, handicap y pinos por juego.
-Cada juego cuenta en las estadísticas solo cuando se verifica con la **foto del marcador**.
+Ligas y torneos de boliche: jugadores, equipos, promedio, handicap y pinos por juego, desde el celular.
 
-- **Torneo** (una vez al año): inscritos con su promedio, equipos, handicap y clasificación.
-  Regla 2025: handicap = (230 − promedio) × 80 %, individual con handicap, equipos por scratch
-  (todo configurable por torneo).
-- **Práctica** (los martes): pinos individuales; alimentan el promedio de cada jugador. Los jugadores
-  confirman si van ("Voy") y el admin agrega a los confirmados con un toque.
-- **Categorías A–D** por promedio (cortes configurables; 2025: A 200+, B 175, C 160) y **equipos
-  automáticos** parejos que mezclan categorías.
-- **Cuentas** (`/login` → *Crear cuenta*): correo + contraseña repetida, sin verificación de correo.
-  Al entrar, el jugador elige quién es en la lista (o crea su perfil) y su cuenta queda vinculada.
-- **Página pública del jugador** (`/j/<id>`, se ve sin login): promedio, juegos, mejor juego y serie,
-  gráfica de sus últimos juegos, torneos (con su posición) y prácticas. Solo el dueño del perfil
-  sube sus juegos con foto —de un evento o **por fecha** si ese día no había evento— y quedan
-  **por aprobar** (lo de una fecha va a la práctica de ese día; se crea si no existe).
-- **Ranking del club** (`/ranking`): promedio, mejor juego, mejor serie y asistencia por temporada.
-- **Clasificación pública** (`/e/<id>`): el torneo o la práctica en vivo, para verla en la bolera.
-- **Panel del admin**: anota juegos (borrador sin foto = vista previa), verifica con foto escaneada
-  por IA (Gemini vía Firebase AI Logic), aprueba lo que suben los jugadores, **arma equipos parejos
-  automáticamente**, exporta el torneo a **Excel**, descarga un **respaldo** de los datos y administra
-  cuentas (desvincular, nombrar admins).
-- **App instalable** (PWA): animación de apertura, abre sin conexión, avisa cuando hay versión nueva;
-  botón "Instalar" en Android y guía para iPhone. Modo claro/oscuro.
+- **Ligas** públicas o privadas. Cualquiera con cuenta crea la suya y queda como **dueño**; invita con
+  **link, QR o código** (cambiar el código invalida el anterior). Las públicas se ven sin login.
+  Cada liga tiene bolera, horario, temporada, contacto (WhatsApp) y si **exige foto** del marcador.
+- **Torneos sin liga**: un torneo suelto con sus propios jugadores, equipos, invitación y admins.
+- **Roles**: el dueño y los **admins** de la liga lo manejan todo (eventos, juegos, aprobaciones,
+  jugadores, miembros, nombrar admins). El **superadmin** ve y administra todas las ligas y las cuentas
+  (fijos en `src/lib/admins.ts` + `isFixedSuper()` de las reglas, o nombrados desde /superadmin).
+- **Observador** (Eventos · Ranking · Perfil): los torneos y prácticas de la liga, pasados y por venir,
+  si participó y su posición, la clasificación en vivo y el detalle de cada juego (cuadros y foto).
+- **Anuncios**: el torneo que viene sale arriba para toda la liga (también para quien entra después),
+  con cuenta regresiva, el mensaje del admin y botón de WhatsApp al contacto.
+- **Torneo** (equipos + handicap; regla 2025: (230 − promedio) × 80 %, individual con handicap y equipos
+  por scratch; todo configurable) con **límite de jugadores por equipo** y **equipos automáticos** parejos
+  que mezclan categorías A–D. **Práctica** (pinos individuales) con asistencia ("Voy").
+- **Anotar por cuadros**, de 3 formas: tocando los **pines** que cayeron en cada tiro, con un **teclado**
+  que bloquea lo imposible (tras un 8 solo 0, 1 o spare) o solo el **total** (barra o número). La hoja
+  calcula strikes, spares y el acumulado; se ven strikes/spares en el perfil.
+- **Fotos**: si la liga exige foto, un juego cuenta solo verificado con la foto (leída por IA); si no,
+  cuenta de una. Los jugadores suben sus juegos (con cuadros) y un admin los aprueba.
+- **Ranking** de la liga por temporada, **Excel** del torneo, **respaldo** JSON por liga (y completo para
+  el superadmin) y borrado de fotos viejas para no llenar el espacio gratis.
+- **App instalable** (PWA): animación de apertura, abre sin conexión, avisa cuando hay versión nueva.
 
 React 19 + Vite + Tailwind 4 · Firebase Auth + Firestore (tiempo real, caché sin conexión) ·
 Firebase AI Logic (Gemini, capa gratuita) · Vercel.
@@ -43,15 +43,14 @@ pnpm emulators   # en otra terminal
 pnpm dev:emu
 ```
 
-`pnpm test` corre las pruebas de los cálculos (handicap, totales, ranking, equipos, lectura de fotos).
+`pnpm test` corre las pruebas de los cálculos (handicap, totales, ranking, equipos, cuadros, lectura de fotos).
 `pnpm test:reglas` prueba `firestore.rules` contra el emulador (necesita Java 11+).
 
 ## Configurar Firebase (una sola vez)
 
 1. **Reglas de Firestore**: publica `firestore.rules`, ya sea pegándolo en
    Consola → Firestore → Reglas, o con `npx firebase-tools login` y después `pnpm reglas`.
-   Los admins fijos están en `isFixedAdmin()` de las reglas y en `src/lib/admins.ts` (deben coincidir);
-   los demás admins se nombran desde la app (Jugadores → cuenta → *Hacer admin*).
+   Los superadmins fijos están en `isFixedSuper()` de las reglas y en `src/lib/admins.ts` (deben coincidir).
 2. **Authentication**: proveedor *Correo/contraseña* activo y, en Configuración → Acciones del
    usuario, **"Crear cuentas" activado** (los jugadores se registran solos, sin verificar el correo).
 3. **AI Logic** (escaneo de fotos): Consola → AI Services → AI Logic → *Get started* →
@@ -73,10 +72,10 @@ en el registro de reCAPTCHA Enterprise.
 ## Importar un torneo pasado
 
 ```bash
-pnpm importar mi-torneo.json
+pnpm importar mi-torneo.json --liga <id-de-la-liga>
 ```
 
-Pide el correo y la contraseña del admin en la terminal. Los juegos importados cuentan como
+El id de la liga es el del link (`/l/<id>`). Pide el correo y la contraseña de un admin de esa liga en la terminal. Los juegos importados cuentan como
 verificados (resultado auditado del Excel, sin foto). `--reemplazar` vuelve a cargar un torneo que
 ya existe. Los archivos de `scripts/datos/` no se suben al repo.
 
@@ -95,9 +94,13 @@ Formato del JSON:
 
 | Colección | Qué guarda |
 |---|---|
-| `users` | cuentas: correo, nombre, rol (`jugador`/`admin`) y jugador vinculado |
-| `players` | nombre, promedio fijo opcional y cuenta vinculada (`uid`) |
-| `events` | torneo o práctica: fecha, juegos, regla de handicap y clasificación, equipos |
-| `entries` | participación `evento_jugador`: promedio de entrada, handicap fijo, pinos y foto de cada juego |
-| `photos` | fotos comprimidas (~150 kB) de los marcadores |
-| `submissions` | juegos subidos por jugadores, pendientes de aprobación |
+| `users` | cuentas: correo, nombre y `superadmin` |
+| `leagues/{liga}` | liga o torneo suelto (`kind`): visibilidad, dueño, bolera, horario, temporada, contacto, `requirePhoto` |
+| `leagues/{liga}/players` | jugadores de la liga, promedio fijo opcional y cuenta vinculada (`uid`) |
+| `leagues/{liga}/events` | torneo o práctica: fecha, juegos, handicap, equipos, límite por equipo, anuncio, asistencia |
+| `leagues/{liga}/entries` | participación `evento_jugador`: promedio de entrada, pinos, foto y cuadros de cada juego |
+| `leagues/{liga}/photos` | fotos comprimidas (~100 kB) de los marcadores |
+| `leagues/{liga}/submissions` | juegos subidos por jugadores, pendientes de aprobación |
+| `leagues/{liga}/private/invite` | código de invitación vigente (solo admins) |
+| `members/{liga}_{uid}` | quién está en qué liga, su rol (`owner`/`admin`/`member`) y su jugador |
+| `invites/{código}` | a qué liga lleva cada código de invitación |

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Eye, Flame, Hash, Trophy, Users } from 'lucide-react';
+import { useLeagueCtx } from '../../lib/league';
 import { entryLine, rank, teamLines, type Line } from '../../lib/stats';
 import type { BowlingEvent, Entry, Player, RankBy } from '../../lib/types';
 import { AnimatedNumber, Card, Empty, Position, cx } from '../ui';
@@ -27,13 +28,17 @@ export function StandingsTab({
   entries,
   players,
   readOnly,
+  onOpen,
 }: {
   event: BowlingEvent;
   entries: Entry[];
   players: Player[];
-  /** Vista pública: sin la vista previa de borradores. */
+  /** Vista de observador: sin la vista previa de borradores. */
   readOnly?: boolean;
+  /** Tocar un jugador abre el detalle de sus juegos. */
+  onOpen?: (entry: Entry) => void;
 }) {
+  const { base, myPlayerId } = useLeagueCtx();
   const isTorneo = event.type === 'torneo';
   const hasHcp = isTorneo && event.hcpPercent > 0;
   // Parten de la regla del torneo (2025: individual con handicap, equipos scratch) y se pueden alternar para mirar.
@@ -73,8 +78,10 @@ export function StandingsTab({
       </div>
 
       {lines.length === 0 ? (
-        <Empty icon={<Trophy className="size-8" />} title="Sin juegos verificados">
-          La clasificación cuenta solo juegos con foto.{pending > 0 && ' Activa la vista previa para ver los borradores.'}
+        <Empty icon={<Trophy className="size-8" />} title={pending > 0 ? 'Sin juegos verificados' : 'Todavía no hay juegos'}>
+          {pending > 0
+            ? `La clasificación cuenta solo juegos verificados.${readOnly ? '' : ' Activa la vista previa para ver los borradores.'}`
+            : 'Cuando se anoten los juegos, la clasificación se actualiza sola.'}
         </Empty>
       ) : (
         <>
@@ -170,12 +177,24 @@ export function StandingsTab({
                 </thead>
                 <tbody>
                   {individual.map(({ row: l, pos }) => (
-                    <tr key={l.entry.id} className="border-b border-line last:border-0">
+                    <tr
+                      key={l.entry.id}
+                      onClick={onOpen ? () => onOpen(l.entry) : undefined}
+                      className={cx(
+                        'border-b border-line last:border-0',
+                        onOpen && 'cursor-pointer transition hover:bg-surface-2/70',
+                        l.entry.playerId === myPlayerId && 'bg-accent-soft/50',
+                      )}
+                    >
                       <td className="px-3 py-2.5">
                         <Position pos={pos} />
                       </td>
                       <td className="px-2 py-2.5">
-                        <Link to={`/j/${l.entry.playerId}`} className="font-medium hover:text-accent hover:underline">
+                        <Link
+                          to={`${base}/j/${l.entry.playerId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-medium hover:text-accent hover:underline"
+                        >
                           {nameOf(l)}
                         </Link>
                         <div className="text-xs text-muted tabular-nums sm:hidden">{l.scores.map((s) => s ?? '–').join(' · ')}</div>

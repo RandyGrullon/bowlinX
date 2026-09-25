@@ -2,11 +2,11 @@ import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { CalendarCheck, Flame, Layers, Medal, Target } from 'lucide-react';
 import { useEntriesOfEvents, useEvents, usePlayers } from '../lib/data';
+import { useLeagueCtx } from '../lib/league';
 import { playerStats, rank } from '../lib/stats';
 import type { Entry } from '../lib/types';
-import { PublicShell } from '../components/PublicShell';
 import { AnimatedNumber, Card, Empty, ListSkeleton, LoadError, Position, Tabs, cx } from '../components/ui';
-import { Avatar } from './PlayersPage';
+import { Avatar } from '../components/Avatar';
 
 /** Mínimo de juegos verificados en la temporada para entrar al ranking de promedio. */
 const MIN_GAMES = 6;
@@ -30,17 +30,18 @@ const metrics: { key: Metric; label: string; icon: ReactNode; value: (r: Row) =>
   { key: 'asistencia', label: 'Asistencia', icon: <CalendarCheck className="size-4" />, value: (r) => r.events },
 ];
 
-/** Ranking del club por temporada (año): público, para motivar a ir a las prácticas. */
+/** Ranking de la liga por temporada (año), para motivar a ir a las prácticas. */
 export default function RankingPage() {
+  const { lid, base, myPlayerId } = useLeagueCtx();
   const [params, setParams] = useSearchParams();
-  const events = useEvents();
-  const players = usePlayers();
+  const events = useEvents(lid);
+  const players = usePlayers(lid);
 
   const years = useMemo(() => [...new Set(events.data.map((e) => e.date.slice(0, 4)))].sort().reverse(), [events.data]);
   const year = params.get('anio') && years.includes(params.get('anio')!) ? params.get('anio')! : years[0];
   const metric = (metrics.find((m) => m.key === params.get('ver'))?.key ?? 'promedio') as Metric;
   const yearEventIds = useMemo(() => events.data.filter((e) => e.date.startsWith(year ?? '')).map((e) => e.id), [events.data, year]);
-  const entries = useEntriesOfEvents(yearEventIds);
+  const entries = useEntriesOfEvents(lid, yearEventIds);
 
   const rows = useMemo(() => {
     const byPlayer = new Map<string, Entry[]>();
@@ -77,14 +78,14 @@ export default function RankingPage() {
   const error = events.error ?? players.error ?? entries.error;
 
   return (
-    <PublicShell>
-      <div className="animate-fade-up flex flex-col gap-5">
+    <>
+      <div className="flex flex-col gap-5">
         <div className="flex items-start gap-3">
           <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-accent-soft text-accent">
             <Medal className="size-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-bold tracking-tight">Ranking del club</h1>
+            <h1 className="text-xl font-bold tracking-tight">Ranking de la liga</h1>
             <p className="text-sm text-muted">Prácticas y torneos de la temporada, solo juegos verificados.</p>
           </div>
           {years.length > 1 && (
@@ -118,7 +119,7 @@ export default function RankingPage() {
                 p ? (
                   <Link
                     key={p.row.playerId}
-                    to={`/j/${p.row.playerId}`}
+                    to={`${base}/j/${p.row.playerId}`}
                     style={{ '--i': i } as CSSProperties}
                     className={cx(
                       'flex flex-col items-center gap-1.5 rounded-2xl border border-line bg-surface p-3 text-center transition hover:-translate-y-0.5',
@@ -143,9 +144,9 @@ export default function RankingPage() {
                 {ranked.slice(3).map(({ row, pos }, i) => (
                   <Link
                     key={row.playerId}
-                    to={`/j/${row.playerId}`}
+                    to={`${base}/j/${row.playerId}`}
                     style={{ '--i': i } as CSSProperties}
-                    className="flex items-center gap-3 px-4 py-2.5 transition hover:bg-surface-2"
+                    className={cx('flex items-center gap-3 px-4 py-2.5 transition hover:bg-surface-2', row.playerId === myPlayerId && 'bg-accent-soft/50')}
                   >
                     <Position pos={pos} />
                     <Avatar name={row.name} className="size-8 text-xs" />
@@ -160,6 +161,6 @@ export default function RankingPage() {
           </div>
         )}
       </div>
-    </PublicShell>
+    </>
   );
 }

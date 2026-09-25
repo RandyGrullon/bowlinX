@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Pencil, Plus, Shield, Shuffle, Trash2, X } from 'lucide-react';
 import { addTeam, deleteTeam, renameTeam, updateEntry } from '../../lib/data';
+import { useLeagueCtx } from '../../lib/league';
 import { category, entryHandicap } from '../../lib/stats';
 import type { BowlingEvent, Entry, Player } from '../../lib/types';
 import { useAction, useFeedback } from '../feedback';
@@ -9,6 +10,7 @@ import { AutoTeamsModal } from './AutoTeamsModal';
 import { CategoryBadge } from './CategoryBadge';
 
 export function TeamsTab({ event, entries, players }: { event: BowlingEvent; entries: Entry[]; players: Player[] }) {
+  const { lid } = useLeagueCtx();
   const run = useAction();
   const { confirm } = useFeedback();
   const [name, setName] = useState('');
@@ -23,7 +25,7 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
     ev.preventDefault();
     const n = name.trim() || `Equipo ${teams.length + 1}`;
     setName('');
-    await run(() => addTeam(event.id, n), `${n} creado`);
+    await run(() => addTeam(lid, event.id, n), `${n} creado`);
   }
 
   async function remove(teamId: string, teamName: string, members: Entry[]) {
@@ -33,7 +35,7 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
       confirmText: 'Eliminar',
       danger: true,
     });
-    if (ok) await run(() => deleteTeam(event.id, teamId, members.map((m) => m.id)), 'Equipo eliminado');
+    if (ok) await run(() => deleteTeam(lid, event.id, teamId, members.map((m) => m.id)), 'Equipo eliminado');
   }
 
   return (
@@ -60,11 +62,17 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
             const members = entries.filter((e) => e.teamId === teamId).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
             const avg = members.reduce((a, m) => a + (m.average || 0), 0);
             const hcp = members.reduce((a, m) => a + entryHandicap(m, event), 0);
+            const full = !!event.teamSize && members.length >= event.teamSize;
             return (
               <Card key={teamId} className="flex flex-col">
                 <div className="flex items-center gap-2 border-b border-line px-4 py-3">
                   <Shield className="size-4 text-accent" />
                   <h3 className="flex-1 truncate font-semibold">{team.name}</h3>
+                  {!!event.teamSize && (
+                    <span className={full ? 'text-xs font-medium text-ok' : 'text-xs text-muted'}>
+                      {members.length}/{event.teamSize}
+                    </span>
+                  )}
                   <Button variant="ghost" size="sm" aria-label="Renombrar" icon={<Pencil className="size-4" />} onClick={() => setRenaming({ id: teamId, name: team.name })} />
                   <Button variant="ghost" size="sm" aria-label="Eliminar equipo" icon={<Trash2 className="size-4" />} onClick={() => remove(teamId, team.name, members)} />
                 </div>
@@ -88,7 +96,7 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
                         type="button"
                         className="rounded p-1 text-muted hover:text-danger"
                         aria-label={`Quitar a ${nameOf(m)} del equipo`}
-                        onClick={() => run(() => updateEntry(m.id, { teamId: null }))}
+                        onClick={() => run(() => updateEntry(lid, m.id, { teamId: null }))}
                       >
                         <X className="size-3.5" />
                       </button>
@@ -96,11 +104,11 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
                   ))}
                   {members.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">Sin jugadores</li>}
                 </ul>
-                {unassigned.length > 0 && (
+                {unassigned.length > 0 && !full && (
                   <div className="mt-auto px-4 pb-3">
                     <Select
                       value=""
-                      onChange={(e) => e.target.value && run(() => updateEntry(e.target.value, { teamId }))}
+                      onChange={(e) => e.target.value && run(() => updateEntry(lid, e.target.value, { teamId }))}
                       aria-label={`Agregar jugador a ${team.name}`}
                       className="h-9"
                     >
@@ -154,7 +162,7 @@ export function TeamsTab({ event, entries, players }: { event: BowlingEvent; ent
           id="rename-team"
           onSubmit={(e) => {
             e.preventDefault();
-            if (renaming?.name.trim()) run(() => renameTeam(event.id, renaming.id, renaming.name.trim()));
+            if (renaming?.name.trim()) run(() => renameTeam(lid, event.id, renaming.id, renaming.name.trim()));
             setRenaming(null);
           }}
         >

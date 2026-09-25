@@ -1,4 +1,4 @@
-export const playerUrl = (playerId: string) => `${location.origin}/j/${playerId}`;
+export const playerUrl = (lid: string, playerId: string) => `${location.origin}/l/${lid}/j/${playerId}`;
 
 /** Comparte con el menú nativo del teléfono o copia al portapapeles. Devuelve true si se copió. */
 export async function shareLink(url: string, title: string): Promise<boolean> {
