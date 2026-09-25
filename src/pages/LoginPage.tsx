@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useSearchParams } from 'react-router';
-import { LogIn, UserPlus } from 'lucide-react';
+import { Link, Navigate, useSearchParams } from 'react-router';
+import { ArrowLeft, LogIn, UserPlus } from 'lucide-react';
 import { authErrorMessage, login, loginWithGoogle, MIN_PASSWORD, signUp, useAuth } from '../lib/auth';
 import { Button, Card, Field, Input, Loading, Tabs } from '../components/ui';
 import { Logo } from '../components/Logo';
@@ -32,6 +32,10 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Mientras se crea la cuenta no se redirige: el perfil (users/{uid}) todavía se está guardando.
+  // A dónde volver sin entrar: la pantalla de la que vino (si es de la app) o Home.
+  const nextParam = params.get('next');
+  const back = nextParam?.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
+
   if (user && !busy) {
     if (loading) return <Loading />;
     // Vuelve a donde estaba (solo rutas internas); si no, a su liga.
@@ -83,6 +87,9 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-dvh items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
+        <Link to={back} className="-mt-4 mb-4 inline-flex items-center gap-1.5 rounded-lg py-1 text-sm font-medium text-muted hover:text-fg">
+          <ArrowLeft className="size-4" /> Volver
+        </Link>
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <Logo className="size-12" />
           <h1 className="text-2xl font-bold tracking-tight">BowlingX</h1>

@@ -21,7 +21,7 @@ const variants: Record<Variant, string> = {
   primary: 'bg-accent text-accent-fg hover:brightness-110 shadow-sm',
   secondary: 'bg-surface text-fg border border-line hover:bg-surface-2',
   ghost: 'text-fg hover:bg-surface-2',
-  danger: 'bg-danger text-white hover:brightness-110',
+  danger: 'bg-danger text-on-danger hover:brightness-110',
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

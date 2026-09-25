@@ -104,6 +104,8 @@ export interface BowlingEvent {
   announcement?: string;
   /** Asistencia confirmada por los jugadores (práctica): playerId → true. */
   rsvp?: Record<string, boolean>;
+  /** Cuándo se creó (para los avisos de "nuevo torneo"). */
+  createdAt?: { toMillis(): number } | null;
 }
 
 /**
@@ -153,6 +155,8 @@ export interface Submission {
   status: SubmissionStatus;
   note: string | null;
   createdAt?: { toMillis(): number } | null;
+  /** Cuándo lo aprobó o rechazó un admin. */
+  reviewedAt?: { toMillis(): number } | null;
 }
 
 export interface Photo {

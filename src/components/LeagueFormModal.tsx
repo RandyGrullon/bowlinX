@@ -1,27 +1,26 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Camera, Globe, Lock } from 'lucide-react';
+import { CalendarRange, Camera, Clock, Globe, Lock } from 'lucide-react';
 import { displayName, useAuth } from '../lib/auth';
 import { createLeague, createTournament, type LeagueInput } from '../lib/data';
 import { toIsoDate } from '../lib/format';
+import { formatSchedule, isCanonicalSchedule, parseSchedule, WEEKDAY_SHORT, WEEKDAYS } from '../lib/schedule';
 import type { League, LeagueKind, Visibility } from '../lib/types';
 import { useAction } from './feedback';
 import { Button, Field, Input, Modal, cx } from './ui';
 
-const empty = (contactName: string, kind: LeagueKind): LeagueInput => {
-  const y = new Date().getFullYear();
-  return {
-    name: '',
-    kind,
-    visibility: kind === 'torneo' ? 'public' : 'private',
-    venue: '',
-    schedule: '',
-    seasonStart: `${y}-01-01`,
-    seasonEnd: `${y}-12-31`,
-    contactName,
-    contactPhone: '',
-    requirePhoto: true,
-  };
-};
+const empty = (contactName: string, kind: LeagueKind): LeagueInput => ({
+  name: '',
+  kind,
+  visibility: kind === 'torneo' ? 'public' : 'private',
+  venue: '',
+  schedule: '',
+  // La temporada es opcional: se activa en el formulario.
+  seasonStart: '',
+  seasonEnd: '',
+  contactName,
+  contactPhone: '',
+  requirePhoto: true,
+});
 
 export const leagueInput = (l: League): LeagueInput => ({
   name: l.name,
@@ -51,9 +50,23 @@ export function LeagueForm({
 }) {
   const [form, setForm] = useState(initial);
   const [date, setDate] = useState(() => toIsoDate(new Date()));
-  useEffect(() => setForm(initial), [initial]);
+  const [hasSeason, setHasSeason] = useState(() => !!(initial.seasonStart || initial.seasonEnd));
+  useEffect(() => {
+    setForm(initial);
+    setHasSeason(!!(initial.seasonStart || initial.seasonEnd));
+  }, [initial]);
   const isTournament = form.kind === 'torneo';
   const set = <K extends keyof LeagueInput>(k: K, v: LeagueInput[K]) => setForm((f) => ({ ...f, [k]: v }));
+
+  function toggleSeason(on: boolean) {
+    setHasSeason(on);
+    if (!on) setForm((f) => ({ ...f, seasonStart: '', seasonEnd: '' }));
+    else if (!form.seasonStart) {
+      // Arranca hoy y termina el 31 de diciembre; se puede cambiar.
+      const today = toIsoDate(new Date());
+      setForm((f) => ({ ...f, seasonStart: today, seasonEnd: `${today.slice(0, 4)}-12-31` }));
+    }
+  }
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -62,6 +75,8 @@ export function LeagueForm({
       name: form.name.trim(),
       venue: form.venue.trim(),
       schedule: form.schedule.trim(),
+      seasonStart: hasSeason ? form.seasonStart : '',
+      seasonEnd: hasSeason ? form.seasonEnd : '',
       contactName: form.contactName.trim(),
       contactPhone: form.contactPhone.replace(/[^\d+]/g, ''),
     }, date);
@@ -105,15 +120,37 @@ export function LeagueForm({
       </Field>
       {!isTournament && (
         <>
-          <Field label="Cuándo juegan" className="col-span-2">
-            <Input maxLength={80} value={form.schedule} onChange={(e) => set('schedule', e.target.value)} placeholder="Martes 7:00 pm" />
-          </Field>
-          <Field label="Temporada desde">
-            <Input type="date" value={form.seasonStart} onChange={(e) => set('seasonStart', e.target.value)} />
-          </Field>
-          <Field label="Hasta">
-            <Input type="date" min={form.seasonStart || undefined} value={form.seasonEnd} onChange={(e) => set('seasonEnd', e.target.value)} />
-          </Field>
+          <SchedulePicker value={form.schedule} onChange={(v) => set('schedule', v)} />
+          <label className="col-span-2 flex cursor-pointer items-center gap-3 rounded-xl border border-line p-3">
+            <input
+              type="checkbox"
+              className="size-4 accent-[var(--accent)]"
+              checked={hasSeason}
+              onChange={(e) => toggleSeason(e.target.checked)}
+            />
+            <span className="flex-1 text-sm">
+              <span className="flex items-center gap-1.5 font-medium">
+                <CalendarRange className="size-4 text-accent" /> Temporada con fechas
+              </span>
+              <span className="text-muted">Opcional: cuándo empieza y termina la liga.</span>
+            </span>
+          </label>
+          {hasSeason && (
+            <>
+              <Field label="Temporada desde">
+                <Input type="date" required value={form.seasonStart} onChange={(e) => set('seasonStart', e.target.value)} />
+              </Field>
+              <Field label="Hasta">
+                <Input
+                  type="date"
+                  required
+                  min={form.seasonStart || undefined}
+                  value={form.seasonEnd}
+                  onChange={(e) => set('seasonEnd', e.target.value)}
+                />
+              </Field>
+            </>
+          )}
         </>
       )}
       <Field label="Contacto para torneos">
@@ -141,6 +178,85 @@ export function LeagueForm({
         </span>
       </label>
     </form>
+  );
+}
+
+/** Días de la semana (se pueden varios) + la hora con el selector de hora del teléfono. */
+function SchedulePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [days, setDays] = useState<number[]>(() => parseSchedule(value).days);
+  const [time, setTime] = useState(() => parseSchedule(value).time);
+  // Texto escrito a mano antes del selector: se muestra tal cual hasta que se elija algo.
+  const [legacy, setLegacy] = useState(() => (value.trim() && !isCanonicalSchedule(value) ? value.trim() : ''));
+  // Si cambian los datos de afuera (otra liga, reabrir el formulario), se vuelven a leer.
+  useEffect(() => {
+    const parsed = parseSchedule(value);
+    if (formatSchedule(parsed.days, parsed.time) !== formatSchedule(days, time)) {
+      setDays(parsed.days);
+      setTime(parsed.time);
+    }
+    if (value !== formatSchedule(days, time)) setLegacy(value.trim() && !isCanonicalSchedule(value) ? value.trim() : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function update(nextDays: number[], nextTime: string) {
+    setDays(nextDays);
+    setTime(nextTime);
+    setLegacy('');
+    onChange(formatSchedule(nextDays, nextTime));
+  }
+
+  const toggle = (d: number) => update(days.includes(d) ? days.filter((x) => x !== d) : [...days, d], time);
+  const summary = formatSchedule(days, time);
+
+  return (
+    <fieldset className="col-span-2 flex flex-col gap-2">
+      <legend className="mb-1.5 text-xs font-medium text-muted">Cuándo juegan</legend>
+      <div className="grid grid-cols-7 gap-1.5" role="group" aria-label="Días">
+        {WEEKDAY_SHORT.map((short, d) => {
+          const on = days.includes(d);
+          return (
+            <button
+              key={short}
+              type="button"
+              onClick={() => toggle(d)}
+              aria-pressed={on}
+              aria-label={WEEKDAYS[d]}
+              title={WEEKDAYS[d]}
+              className={cx(
+                'h-10 rounded-xl border text-sm font-semibold transition active:scale-95',
+                on ? 'border-accent bg-accent text-accent-fg' : 'border-line text-muted hover:bg-surface-2',
+              )}
+            >
+              {short}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-2">
+        <label className="relative flex-1">
+          <Clock className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+          <Input
+            type="time"
+            aria-label="Hora"
+            value={time}
+            onChange={(e) => update(days, e.target.value)}
+            className="pl-9"
+          />
+        </label>
+        {(days.length > 0 || time) && (
+          <button type="button" onClick={() => update([], '')} className="px-2 text-xs font-medium text-muted hover:text-fg">
+            Borrar
+          </button>
+        )}
+      </div>
+      <span className="text-xs text-muted">
+        {legacy
+          ? `Ahora dice: “${legacy}”. Si eliges días u hora, se reemplaza.`
+          : summary
+            ? `Se verá así: ${summary}`
+            : 'Elige el día (o los días) y la hora.'}
+      </span>
+    </fieldset>
   );
 }
 

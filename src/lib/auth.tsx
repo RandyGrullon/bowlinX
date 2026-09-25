@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               ensureProfile(user)
                 .then(() => getDoc(doc(db, 'users', user.uid)))
                 .then((s) => s.exists() && show({ id: s.id, ...s.data() } as UserProfile))
-                // Si no se pudo, igual entra: en Mi cuenta puede completar su nombre.
+                // Si no se pudo, igual entra: en Configuración de la cuenta puede completar su nombre.
                 .catch(() => show(null));
               return;
             }

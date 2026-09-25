@@ -1,16 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { Check, ChevronRight, Crown, LogOut, Pencil } from 'lucide-react';
+import { Check, ChevronRight, Crown, LogOut, Pencil, Settings } from 'lucide-react';
 import { createProfile, displayName, logout, renameProfile, useAuth } from '../lib/auth';
 import { useLeaguesByIds, useMyMemberships } from '../lib/data';
 import { rememberLeague, roleLabel } from '../lib/league';
 import { AppShell } from '../components/Shell';
 import { Avatar } from '../components/Avatar';
 import { useAction } from '../components/feedback';
-import { GlobalStats } from '../components/GlobalStats';
-import { Badge, Button, Card, Field, Input, ListSkeleton, Loading, StatsSkeleton } from '../components/ui';
+import { Badge, Button, Card, Field, Input, ListSkeleton, Loading } from '../components/ui';
 
-/** Mi cuenta = perfil global: nombre, estadísticas de todas las ligas, mis ligas, superadmin y cerrar sesión. */
+/** Configuración de la cuenta (engrane de arriba): nombre, correo, mis ligas, superadmin y cerrar sesión. */
 export default function AccountPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -22,7 +21,7 @@ export default function AccountPage() {
   const [busy, setBusy] = useState(false);
 
   if (auth.loading) return <Loading />;
-  if (!auth.user) return <Navigate to="/login?next=%2Fperfil" replace />;
+  if (!auth.user) return <Navigate to="/login?next=%2Fcuenta" replace />;
   const user = auth.user;
 
   async function saveName(e: FormEvent) {
@@ -50,12 +49,15 @@ export default function AccountPage() {
   return (
     <AppShell>
       <div className="flex flex-col gap-5">
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          <Settings className="size-6 text-accent" /> Configuración
+        </h1>
         <Card className="flex flex-col gap-4 p-5">
           <div className="flex items-center gap-4">
             <Avatar name={displayName(auth)} className="size-14 text-lg" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h1 className="truncate text-xl font-bold tracking-tight">{displayName(auth)}</h1>
+                <h2 className="truncate text-xl font-bold tracking-tight">{displayName(auth)}</h2>
                 {auth.isSuper && (
                   <Badge tone="accent">
                     <Crown className="size-3" /> Superadmin
@@ -89,18 +91,6 @@ export default function AccountPage() {
           )}
         </Card>
 
-        <section className="flex flex-col gap-3">
-          <div>
-            <h2 className="text-lg font-bold tracking-tight">Mis estadísticas</h2>
-            <p className="text-sm text-muted">Todas tus ligas y torneos juntos. Solo cuentan los juegos que ya cuentan en cada liga.</p>
-          </div>
-          {memberships.loading || leagues.loading ? (
-            <StatsSkeleton />
-          ) : (
-            <GlobalStats memberships={memberships.data} leagues={leagues.data} />
-          )}
-        </section>
-
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold text-muted">Mis ligas</h2>
           {memberships.loading || leagues.loading ? (
@@ -108,8 +98,8 @@ export default function AccountPage() {
           ) : leagues.data.length === 0 ? (
             <Card className="p-4 text-sm text-muted">
               Todavía no estás en ninguna.{' '}
-              <Link to="/ligas" className="font-medium text-accent">
-                Buscar o crear una liga
+              <Link to="/" className="font-medium text-accent">
+                Crear o unirme a una liga
               </Link>
             </Card>
           ) : (

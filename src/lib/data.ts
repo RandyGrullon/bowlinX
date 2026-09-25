@@ -171,6 +171,136 @@ export function usePlayerAcrossLeagues(links: { lid: string; playerId: string }[
   return state;
 }
 
+export interface LeagueFeed {
+  lid: string;
+  playerId: string | null;
+  isAdmin: boolean;
+  /** Eventos de ayer en adelante (lo que viene). */
+  events: BowlingEvent[];
+  /** Envíos del jugador de la cuenta. */
+  mySubs: Submission[];
+  /** Envíos por aprobar (solo si es admin de la liga). */
+  pending: Submission[];
+}
+
+/**
+ * onSnapshot que se reintenta (0,5 s, 1 s, 2 s, 4 s, 8 s) si Firestore lo rechaza. Pasa justo después
+ * de crear o unirse a una liga: la membresía está en el teléfono pero el servidor todavía no la tiene.
+ * Si sigue fallando (p. ej. te sacaron de la liga), llama a `onGiveUp`.
+ */
+function listenRetry(subscribe: (onError: (e: Error) => void) => () => void, onGiveUp: (e: Error) => void, attempts = 5): () => void {
+  let stop = () => undefined as void;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  const start = (n: number) => {
+    stop = subscribe((e) => {
+      if (closed) return;
+      if (n < attempts) timer = setTimeout(() => !closed && start(n + 1), 500 * 2 ** n);
+      else onGiveUp(e);
+    });
+  };
+  start(0);
+  return () => {
+    closed = true;
+    clearTimeout(timer);
+    stop();
+  };
+}
+
+/**
+ * Lo que alimenta los avisos (campana): por cada liga de la cuenta, los eventos que vienen,
+ * sus envíos y, si es admin, lo que falta por aprobar. Todo en vivo y dentro de sus permisos.
+ * Para los envíos aprobados o rechazados del último mes también se traen sus eventos pasados
+ * (para decir en el aviso de qué torneo o práctica eran).
+ */
+export function useLeagueFeeds(memberships: Member[], fromDate: string): Live<LeagueFeed[]> {
+  const key = memberships
+    .map((m) => `${m.leagueId}:${m.playerId ?? '-'}:${m.role === 'member' ? 'm' : 'a'}`)
+    .sort()
+    .join(',');
+  const [state, setState] = useState<Live<LeagueFeed[]>>({ data: [], loading: memberships.length > 0, error: null });
+  useEffect(() => {
+    const items = key
+      ? key.split(',').map((k) => {
+          const [lid, pid, role] = k.split(':');
+          return { lid, playerId: pid === '-' ? null : pid, isAdmin: role === 'a' };
+        })
+      : [];
+    if (!items.length) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    let closed = false;
+    type Part = 'events' | 'mySubs' | 'pending';
+    const parts = new Map<string, Partial<Record<Part, unknown[]>>>();
+    // Eventos pasados de envíos revisados hace poco: liga -> id -> evento.
+    const older = new Map<string, Map<string, BowlingEvent>>();
+    const requested = new Set<string>();
+    const needed = (it: (typeof items)[number]): Part[] => ['events', ...(it.playerId ? (['mySubs'] as Part[]) : []), ...(it.isAdmin ? (['pending'] as Part[]) : [])];
+    const publish = () => {
+      if (closed) return;
+      setState({
+        data: items
+          .filter((it) => needed(it).every((p) => parts.get(it.lid)?.[p]))
+          .map((it) => {
+            const got = parts.get(it.lid)!;
+            const upcoming = (got.events ?? []) as BowlingEvent[];
+            const extra = [...(older.get(it.lid)?.values() ?? [])].filter((e) => !upcoming.some((u) => u.id === e.id));
+            return {
+              ...it,
+              events: [...upcoming, ...extra],
+              mySubs: (got.mySubs ?? []) as Submission[],
+              pending: (got.pending ?? []) as Submission[],
+            };
+          }),
+        loading: items.some((it) => !needed(it).every((p) => parts.get(it.lid)?.[p])),
+        error: null,
+      });
+    };
+    const fetchOlder = (lid: string) => {
+      const got = parts.get(lid);
+      const subs = got?.mySubs as Submission[] | undefined;
+      if (!subs || !got?.events) return;
+      const have = new Set((got.events as BowlingEvent[]).map((e) => e.id));
+      const cutoff = Date.now() - 30 * 86400_000;
+      for (const s of subs) {
+        if (s.status === 'pendiente' || !s.eventId || have.has(s.eventId)) continue;
+        if ((s.reviewedAt?.toMillis?.() ?? 0) < cutoff) continue;
+        const k = `${lid}/${s.eventId}`;
+        if (requested.has(k)) continue;
+        requested.add(k);
+        getDoc(ref(lid, 'events', s.eventId))
+          .then((snap) => {
+            if (!snap.exists()) return;
+            if (!older.has(lid)) older.set(lid, new Map());
+            older.get(lid)!.set(snap.id, { id: snap.id, ...snap.data() } as BowlingEvent);
+            publish();
+          })
+          .catch(() => undefined);
+      }
+    };
+    const put = (lid: string, part: Part) => (snap: { docs: { id: string; data(): DocumentData }[] }) => {
+      parts.set(lid, { ...parts.get(lid), [part]: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+      if (part !== 'pending') fetchOlder(lid);
+      publish();
+    };
+    // Si una liga sigue fallando (p. ej. te sacaron), se ignora: los avisos de las demás siguen.
+    const skip = (lid: string, part: Part) => () => put(lid, part)({ docs: [] });
+    const listen = (lid: string, part: Part, q: Query<DocumentData>) =>
+      listenRetry((onError) => onSnapshot(q, put(lid, part), onError), skip(lid, part));
+    const unsubs = items.flatMap((it) => [
+      listen(it.lid, 'events', query(col(it.lid, 'events'), where('date', '>=', fromDate))),
+      ...(it.playerId ? [listen(it.lid, 'mySubs', query(col(it.lid, 'submissions'), where('playerId', '==', it.playerId)))] : []),
+      ...(it.isAdmin ? [listen(it.lid, 'pending', query(col(it.lid, 'submissions'), where('status', '==', 'pendiente')))] : []),
+    ]);
+    return () => {
+      closed = true;
+      unsubs.forEach((u) => u());
+    };
+  }, [key, fromDate]);
+  return state;
+}
+
 export function useLeaguesByIds(ids: string[]): Live<League[]> {
   const key = [...ids].sort().join(',');
   const [state, setState] = useState<Live<League[]>>({ data: [], loading: ids.length > 0, error: null });
@@ -187,13 +317,18 @@ export function useLeaguesByIds(ids: string[]): Live<League[]> {
         loading: found.size < list.length,
         error: null,
       });
+    // Recién creada o recién unido: el primer intento puede fallar; se reintenta antes de darla por perdida.
     const unsubs = list.map((id) =>
-      onSnapshot(
-        doc(db, 'leagues', id),
-        (snap) => {
-          found.set(id, snap.exists() ? ({ id: snap.id, ...snap.data() } as League) : null);
-          publish();
-        },
+      listenRetry(
+        (onError) =>
+          onSnapshot(
+            doc(db, 'leagues', id),
+            (snap) => {
+              found.set(id, snap.exists() ? ({ id: snap.id, ...snap.data() } as League) : null);
+              publish();
+            },
+            onError,
+          ),
         () => {
           found.set(id, null);
           publish();

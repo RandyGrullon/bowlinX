@@ -21,7 +21,7 @@ const recentlyDismissed = () => {
 
 function Banner({ icon, children, onClose }: { icon: React.ReactNode; children: React.ReactNode; onClose?: () => void }) {
   return (
-    <div className="pb-safe animate-fade-up fixed inset-x-3 bottom-20 z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-line bg-surface p-3 shadow-2xl sm:bottom-6">
+    <div className="animate-fade-up fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-line bg-surface p-3 shadow-2xl sm:bottom-6">
       <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">{icon}</div>
       <div className="min-w-0 flex-1 text-sm">{children}</div>
       {onClose && (

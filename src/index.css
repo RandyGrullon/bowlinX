@@ -12,6 +12,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-on-danger: var(--on-danger);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-warn: var(--warn);
@@ -35,6 +36,8 @@
   --accent-soft: #e8e7fb;
   --danger: #c62828;
   --danger-soft: #fdecec;
+  /* Texto sobre rojo: blanco en claro, oscuro en oscuro (el rojo claro con blanco no se lee). */
+  --on-danger: #ffffff;
   --ok: #1b7f4b;
   --ok-soft: #e4f5ec;
   --warn: #a15c00;
@@ -58,6 +61,7 @@
     --accent-soft: #25264a;
     --danger: #f07070;
     --danger-soft: #3a1c1f;
+    --on-danger: #0d0f15;
     --ok: #4cc987;
     --ok-soft: #15301f;
     --warn: #f0b04a;
@@ -81,6 +85,12 @@ html {
   touch-action: pan-x pan-y;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+}
+
+/* Deslizar de lado más allá del borde no navega (atrás/adelante del navegador). */
+html,
+body {
+  overscroll-behavior-x: none;
 }
 
 body {

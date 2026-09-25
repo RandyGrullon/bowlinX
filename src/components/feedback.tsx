@@ -63,14 +63,14 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       >
         <div className="text-sm text-muted">{pending?.message}</div>
       </Modal>
-      <div className="pointer-events-none fixed inset-x-0 bottom-20 z-50 flex flex-col items-center gap-2 px-4 sm:bottom-6">
+      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-50 flex flex-col items-center gap-2 px-4 sm:bottom-6">
         {toasts.map((t) => (
           <div
             key={t.id}
             role="status"
             className={cx(
               'animate-fade-up pointer-events-auto flex max-w-sm items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium shadow-lg',
-              t.tone === 'ok' ? 'bg-fg text-bg' : 'bg-danger text-white',
+              t.tone === 'ok' ? 'bg-fg text-bg' : 'bg-danger text-on-danger',
             )}
           >
             {t.tone === 'ok' ? <CheckCircle2 className="size-4 shrink-0" /> : <AlertTriangle className="size-4 shrink-0" />}

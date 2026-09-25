@@ -1,10 +1,12 @@
-import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router';
+import { Navigate, Route, Routes, useParams } from 'react-router';
 import { lazy, Suspense } from 'react';
 import { AuthProvider } from './lib/auth';
 import { badConfig, firebaseConfigured } from './lib/firebase';
 import { useLeagueCtx } from './lib/league';
 import { FeedbackProvider } from './components/feedback';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { AppRouter } from './components/GestureGuards';
+import { NotificationsProvider } from './components/Notifications';
 import { PwaPrompts } from './components/PwaPrompts';
 import { TopLoader } from './components/ui';
 
@@ -15,6 +17,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'));
 const LeaguesPage = lazy(() => import('./pages/LeaguesPage'));
 const JoinPage = lazy(() => import('./pages/JoinPage'));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage'));
 const LeagueHome = lazy(() => import('./pages/LeagueHomePage'));
 const EventPage = lazy(() => import('./pages/EventPage'));
@@ -60,29 +63,32 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <FeedbackProvider>
-          <BrowserRouter>
-            <Suspense fallback={<TopLoader />}>
-              <Routes>
-                <Route index element={<HomePage />} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/ligas" element={<LeaguesPage />} />
-                <Route path="/unirse/:code" element={<JoinPage />} />
-                <Route path="/perfil" element={<AccountPage />} />
-                <Route path="/superadmin" element={<SuperAdminPage />} />
-                <Route path="/l/:lid" element={<LeagueShell />}>
-                  <Route index element={<LeagueHome />} />
-                  <Route path="ranking" element={<LeagueRanking />} />
-                  <Route path="perfil" element={<LeagueProfilePage />} />
-                  <Route path="admin" element={<AdminPage />} />
-                  <Route path="e/:eventId" element={<EventPage />} />
-                  <Route path="j/:playerId" element={<PlayerRoute />} />
-                  <Route path="*" element={<Navigate to="." replace />} />
-                </Route>
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </Suspense>
+          <AppRouter>
+            <NotificationsProvider>
+              <Suspense fallback={<TopLoader />}>
+                <Routes>
+                  <Route index element={<HomePage />} />
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/ligas" element={<LeaguesPage />} />
+                  <Route path="/unirse/:code" element={<JoinPage />} />
+                  <Route path="/perfil" element={<ProfilePage />} />
+                  <Route path="/cuenta" element={<AccountPage />} />
+                  <Route path="/superadmin" element={<SuperAdminPage />} />
+                  <Route path="/l/:lid" element={<LeagueShell />}>
+                    <Route index element={<LeagueHome />} />
+                    <Route path="ranking" element={<LeagueRanking />} />
+                    <Route path="perfil" element={<LeagueProfilePage />} />
+                    <Route path="admin" element={<AdminPage />} />
+                    <Route path="e/:eventId" element={<EventPage />} />
+                    <Route path="j/:playerId" element={<PlayerRoute />} />
+                    <Route path="*" element={<Navigate to="." replace />} />
+                  </Route>
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </Suspense>
+            </NotificationsProvider>
             <PwaPrompts />
-          </BrowserRouter>
+          </AppRouter>
         </FeedbackProvider>
       </AuthProvider>
     </ErrorBoundary>
