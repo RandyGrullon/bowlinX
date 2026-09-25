@@ -75,6 +75,14 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Sin zoom con los dedos: se puede deslizar en cualquier dirección, pero no pellizcar ni doble toque.
+   El texto tampoco se agranda solo al girar el teléfono. */
+html {
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   font-family: var(--font-sans);
 }
