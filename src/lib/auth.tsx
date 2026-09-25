@@ -1,11 +1,15 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
+  applyActionCode,
+  confirmPasswordReset,
   createUserWithEmailAndPassword,
   deleteUser,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  verifyPasswordResetCode,
   type User,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
@@ -101,6 +105,36 @@ export async function signUp(name: string, email: string, password: string) {
   }
 }
 
+/**
+ * "Olvidé mi contraseña": Firebase manda el correo (gratis) con un link para ponerla nueva.
+ * Si en la consola se personalizó la URL de acción, el link abre /cambiar-clave de la app.
+ * Un correo sin cuenta no da error: así nadie averigua qué correos están registrados.
+ */
+export async function sendReset(email: string) {
+  auth.languageCode = 'es';
+  try {
+    // Al terminar en la página de Firebase aparece "Continuar" de vuelta a la app.
+    await sendPasswordResetEmail(auth, email.trim(), { url: `${location.origin}/login` });
+  } catch (e) {
+    const code = (e as { code?: string })?.code ?? '';
+    // El dominio todavía no está autorizado en Firebase: se manda igual, sin el botón de volver.
+    if (/unauthorized-continue-uri|invalid-continue-uri/.test(code)) await sendPasswordResetEmail(auth, email.trim());
+    else if (!code.includes('user-not-found')) throw e;
+  }
+}
+
+/** Revisa el link del correo y devuelve de qué cuenta es. */
+export const checkResetCode = (code: string) => verifyPasswordResetCode(auth, code);
+
+/** Guarda la contraseña nueva y entra de una con ella. */
+export async function finishReset(code: string, email: string, password: string) {
+  await confirmPasswordReset(auth, code, password);
+  await signInWithEmailAndPassword(auth, email, password);
+}
+
+/** Otros links de correo de Firebase (verificar o recuperar el correo). */
+export const applyEmailCode = (code: string) => applyActionCode(auth, code);
+
 export const MIN_PASSWORD = 6;
 
 export function authErrorMessage(e: unknown): string {
@@ -113,6 +147,10 @@ export function authErrorMessage(e: unknown): string {
   if (/operation-not-allowed|admin-restricted-operation/.test(code))
     return 'El registro de cuentas está desactivado. Hay que activarlo en Firebase (Authentication).';
   if (code.includes('too-many-requests')) return 'Demasiados intentos. Espera unos minutos.';
+  if (code.includes('expired-action-code')) return 'Este link ya venció. Pide otro desde "¿Olvidaste tu contraseña?".';
+  if (code.includes('invalid-action-code')) return 'Este link ya se usó o no es válido. Pide otro desde "¿Olvidaste tu contraseña?".';
+  if (code.includes('user-disabled')) return 'Esta cuenta está desactivada.';
+  if (code.includes('missing-email')) return 'Escribe tu correo.';
   if (code.includes('network')) return 'Sin conexión. Revisa tu internet.';
   if (/api-key|invalid-api-key/.test(code)) return 'La configuración de Firebase no es válida (API key). Revisa las variables en Vercel.';
   if (code.includes('permission-denied')) return 'No se pudo crear tu perfil (permisos). Revisa las reglas de Firestore.';

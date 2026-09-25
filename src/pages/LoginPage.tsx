@@ -1,46 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useSearchParams } from 'react-router';
-import { Eye, EyeOff, LogIn, UserPlus } from 'lucide-react';
-import { authErrorMessage, login, MIN_PASSWORD, signUp, useAuth } from '../lib/auth';
+import { ArrowLeft, LogIn, MailCheck, Send, UserPlus } from 'lucide-react';
+import { authErrorMessage, login, MIN_PASSWORD, sendReset, signUp, useAuth } from '../lib/auth';
 import { Button, Card, Field, Input, Loading, Tabs } from '../components/ui';
 import { Logo } from '../components/Logo';
+import { PasswordInput } from '../components/PasswordInput';
 
 type Mode = 'entrar' | 'registro';
-
-function PasswordInput({
-  value,
-  onChange,
-  autoComplete,
-  invalid,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  autoComplete: string;
-  invalid?: boolean;
-}) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="relative">
-      <Input
-        type={show ? 'text' : 'password'}
-        autoComplete={autoComplete}
-        required
-        minLength={autoComplete === 'new-password' ? MIN_PASSWORD : undefined}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={invalid ? 'border-danger pr-10' : 'pr-10'}
-      />
-      <button
-        type="button"
-        onClick={() => setShow((s) => !s)}
-        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted"
-        aria-label={show ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-      >
-        {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-      </button>
-    </div>
-  );
-}
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
@@ -52,6 +18,7 @@ export default function LoginPage() {
   const [password2, setPassword2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [forgot, setForgot] = useState(false);
 
   // Mientras se crea la cuenta no se redirige: el perfil (users/{uid}) todavía se está guardando.
   if (user && !busy) {
@@ -97,6 +64,9 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold tracking-tight">BowlinX</h1>
           <p className="text-sm text-muted">Torneos y prácticas de boliche</p>
         </div>
+        {forgot ? (
+          <ForgotPassword initialEmail={email} onBack={() => setForgot(false)} />
+        ) : (
         <Card className="flex flex-col gap-4 p-5">
           <Tabs
             items={[
@@ -123,6 +93,18 @@ export default function LoginPage() {
                 invalid={short}
               />
             </Field>
+            {mode === 'entrar' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setForgot(true);
+                }}
+                className="-mt-2 self-end text-xs font-medium text-accent"
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
+            )}
             {mode === 'registro' && (
               <Field label="Repite la contraseña" hint={mismatch ? 'Las contraseñas no coinciden.' : undefined}>
                 <PasswordInput value={password2} onChange={setPassword2} autoComplete="new-password" invalid={mismatch} />
@@ -140,6 +122,7 @@ export default function LoginPage() {
             </Button>
           </form>
         </Card>
+        )}
         <p className="mt-4 text-center text-xs text-muted">
           {mode === 'registro'
             ? 'Después eliges quién eres en la lista de jugadores para ver tu perfil y subir tus juegos.'
@@ -147,5 +130,59 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+/** Pide el correo y Firebase manda el link para poner una contraseña nueva. */
+function ForgotPassword({ initialEmail, onBack }: { initialEmail: string; onBack: () => void }) {
+  const [email, setEmail] = useState(initialEmail);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await sendReset(email);
+      setSent(true);
+    } catch (err) {
+      setError(authErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="flex flex-col gap-4 p-5">
+      <div>
+        <h2 className="text-lg font-semibold">¿Olvidaste tu contraseña?</h2>
+        <p className="text-sm text-muted">Te mandamos un link a tu correo para que pongas una nueva.</p>
+      </div>
+      {sent ? (
+        <div className="animate-fade-up flex flex-col items-center gap-2 rounded-xl bg-ok-soft px-4 py-5 text-center text-sm">
+          <MailCheck className="size-8 text-ok" />
+          <p className="font-medium text-fg">Revisa tu correo</p>
+          <p className="text-muted">
+            Si <b className="text-fg">{email.trim()}</b> tiene cuenta, te llegó el link (puede tardar un minuto; mira también en spam o
+            promociones).
+          </p>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <Field label="Correo de tu cuenta">
+            <Input type="email" autoComplete="username" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>}
+          <Button type="submit" variant="primary" loading={busy} icon={<Send className="size-4" />}>
+            Enviarme el link
+          </Button>
+        </form>
+      )}
+      <Button variant="ghost" icon={<ArrowLeft className="size-4" />} onClick={onBack}>
+        Volver a entrar
+      </Button>
+    </Card>
   );
 }

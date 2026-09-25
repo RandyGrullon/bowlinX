@@ -1,12 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { Check, ChevronRight, Crown, LogOut, Pencil } from 'lucide-react';
-import { createProfile, displayName, logout, renameProfile, useAuth } from '../lib/auth';
+import { Check, ChevronRight, Crown, KeyRound, LogOut, Pencil } from 'lucide-react';
+import { authErrorMessage, createProfile, displayName, logout, renameProfile, sendReset, useAuth } from '../lib/auth';
 import { useLeaguesByIds, useMyMemberships } from '../lib/data';
 import { rememberLeague, roleLabel } from '../lib/league';
 import { AppShell } from '../components/Shell';
 import { Avatar } from '../components/Avatar';
-import { useAction } from '../components/feedback';
+import { useAction, useFeedback } from '../components/feedback';
 import { Badge, Button, Card, Field, Input, ListSkeleton, Loading } from '../components/ui';
 
 /** Mi cuenta: nombre, ligas, superadmin y cerrar sesión. */
@@ -14,6 +14,8 @@ export default function AccountPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const run = useAction();
+  const { toast } = useFeedback();
+  const [sendingReset, setSendingReset] = useState(false);
   const memberships = useMyMemberships(auth.user?.uid);
   const leagues = useLeaguesByIds(memberships.data.map((m) => m.leagueId));
   const [editing, setEditing] = useState(false);
@@ -34,6 +36,20 @@ export default function AccountPage() {
     }, 'Nombre guardado');
     setBusy(false);
     if (ok) setEditing(false);
+  }
+
+  /** Cambiar la contraseña: el mismo link por correo de "olvidé mi contraseña". */
+  async function changePassword() {
+    if (!user.email) return;
+    setSendingReset(true);
+    try {
+      await sendReset(user.email);
+      toast(`Te mandamos un link a ${user.email} para cambiarla`);
+    } catch (e) {
+      toast(authErrorMessage(e), 'error');
+    } finally {
+      setSendingReset(false);
+    }
   }
 
   async function signOut() {
@@ -123,9 +139,14 @@ export default function AccountPage() {
           </Link>
         )}
 
-        <Button className="self-center text-danger" variant="ghost" icon={<LogOut className="size-4" />} onClick={signOut}>
-          Cerrar sesión
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="ghost" icon={<KeyRound className="size-4" />} loading={sendingReset} onClick={changePassword}>
+            Cambiar contraseña
+          </Button>
+          <Button className="text-danger" variant="ghost" icon={<LogOut className="size-4" />} onClick={signOut}>
+            Cerrar sesión
+          </Button>
+        </div>
       </div>
     </AppShell>
   );
