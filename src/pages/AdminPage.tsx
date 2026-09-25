@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import {
   CalendarRange,
   Camera,
+  ChevronDown,
   Clock,
   DatabaseBackup,
   Globe,
@@ -158,25 +159,35 @@ function SettingsPanel() {
   const { league } = useLeagueCtx();
   const [editing, setEditing] = useState(false);
   const [configuring, setConfiguring] = useState(false);
+  const [open, setOpen] = useState(false);
   const isTournament = league.kind === 'torneo';
   const season = league.seasonStart && league.seasonEnd ? `${formatDate(league.seasonStart)} – ${formatDate(league.seasonEnd)}` : '';
   const contact = [league.contactName, league.contactPhone].filter(Boolean).join(' · ');
 
   return (
     <div className="flex flex-col gap-5">
-      <Card className="flex flex-col gap-4 p-4">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-muted">{isTournament ? 'Datos del torneo' : 'Datos de la liga'}</p>
-            <h2 className="truncate text-lg font-bold tracking-tight">{league.name}</h2>
-            <Badge tone={league.visibility === 'private' ? 'neutral' : 'accent'} className="mt-1">
-              {league.visibility === 'private' ? <Lock className="size-3" /> : <Globe className="size-3" />}
-              {league.visibility === 'private' ? 'Privada' : 'Pública'}
-            </Badge>
-          </div>
-          <Button size="sm" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>
-            Editar
-          </Button>
+      <Card className="flex flex-col p-4">
+        <div className="flex items-center gap-2">
+          {/* Acordeón: cerrado solo se ve el nombre; al tocarlo se despliegan los datos. */}
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            aria-controls="datos-liga"
+            className="-m-1 flex min-w-0 flex-1 items-center gap-2 rounded-xl p-1 text-left transition hover:bg-surface-2"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 text-xs font-medium text-muted">
+                {isTournament ? 'Datos del torneo' : 'Datos de la liga'}
+                <Badge tone={league.visibility === 'private' ? 'neutral' : 'accent'} className="px-1.5 py-0 text-[11px]">
+                  {league.visibility === 'private' ? <Lock className="size-3" /> : <Globe className="size-3" />}
+                  {league.visibility === 'private' ? 'Privada' : 'Pública'}
+                </Badge>
+              </p>
+              <h2 className="truncate text-lg font-bold tracking-tight">{league.name}</h2>
+            </div>
+            <ChevronDown className={cx('size-5 shrink-0 text-muted transition-transform duration-200', open && 'rotate-180')} />
+          </button>
           <Button
             size="sm"
             variant="ghost"
@@ -186,30 +197,40 @@ function SettingsPanel() {
             title="Configuración"
           />
         </div>
-        <dl className="grid gap-2.5 text-sm sm:grid-cols-2">
-          <Detail icon={<MapPin className="size-4" />} label="Bolera" value={league.venue} />
-          {!isTournament && <Detail icon={<Clock className="size-4" />} label="Cuándo juegan" value={league.schedule} />}
-          {!isTournament && <Detail icon={<CalendarRange className="size-4" />} label="Temporada" value={season} />}
-          <Detail
-            icon={<MessageCircle className="size-4" />}
-            label="Contacto"
-            value={
-              contact &&
-              (league.contactPhone ? (
-                <a href={whatsappUrl(league.contactPhone)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                  {contact}
-                </a>
-              ) : (
-                contact
-              ))
-            }
-          />
-          <Detail
-            icon={<Camera className="size-4" />}
-            label="Foto del marcador"
-            value={league.requirePhoto !== false ? 'Obligatoria para que cuente' : 'Opcional'}
-          />
-        </dl>
+        <div
+          id="datos-liga"
+          className={cx('grid transition-[grid-template-rows,opacity] duration-200 ease-out', open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0')}
+        >
+          <div className="overflow-hidden" inert={!open}>
+            <dl className="grid gap-2.5 pt-4 text-sm sm:grid-cols-2">
+              <Detail icon={<MapPin className="size-4" />} label="Bolera" value={league.venue} />
+              {!isTournament && <Detail icon={<Clock className="size-4" />} label="Cuándo juegan" value={league.schedule} />}
+              {!isTournament && <Detail icon={<CalendarRange className="size-4" />} label="Temporada" value={season} />}
+              <Detail
+                icon={<MessageCircle className="size-4" />}
+                label="Contacto"
+                value={
+                  contact &&
+                  (league.contactPhone ? (
+                    <a href={whatsappUrl(league.contactPhone)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                      {contact}
+                    </a>
+                  ) : (
+                    contact
+                  ))
+                }
+              />
+              <Detail
+                icon={<Camera className="size-4" />}
+                label="Foto del marcador"
+                value={league.requirePhoto !== false ? 'Obligatoria para que cuente' : 'Opcional'}
+              />
+            </dl>
+            <Button className="mt-4 w-full sm:w-auto" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>
+              Editar datos
+            </Button>
+          </div>
+        </div>
       </Card>
 
       <InviteCard league={league} />
