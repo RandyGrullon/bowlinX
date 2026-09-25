@@ -7,9 +7,10 @@ import { rememberLeague, roleLabel } from '../lib/league';
 import { AppShell } from '../components/Shell';
 import { Avatar } from '../components/Avatar';
 import { useAction } from '../components/feedback';
-import { Badge, Button, Card, Field, Input, ListSkeleton, Loading } from '../components/ui';
+import { GlobalStats } from '../components/GlobalStats';
+import { Badge, Button, Card, Field, Input, ListSkeleton, Loading, StatsSkeleton } from '../components/ui';
 
-/** Mi cuenta: nombre, ligas, superadmin y cerrar sesión. */
+/** Mi cuenta = perfil global: nombre, estadísticas de todas las ligas, mis ligas, superadmin y cerrar sesión. */
 export default function AccountPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -87,6 +88,18 @@ export default function AccountPage() {
             </form>
           )}
         </Card>
+
+        <section className="flex flex-col gap-3">
+          <div>
+            <h2 className="text-lg font-bold tracking-tight">Mis estadísticas</h2>
+            <p className="text-sm text-muted">Todas tus ligas y torneos juntos. Solo cuentan los juegos que ya cuentan en cada liga.</p>
+          </div>
+          {memberships.loading || leagues.loading ? (
+            <StatsSkeleton />
+          ) : (
+            <GlobalStats memberships={memberships.data} leagues={leagues.data} />
+          )}
+        </section>
 
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold text-muted">Mis ligas</h2>

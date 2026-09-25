@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { CalendarDays, Camera, CheckCircle2, ChevronRight, Clock, Flame, Hash, Layers, LogOut, Share2, Target, Trophy, Upload, UserPlus, XCircle } from 'lucide-react';
+import { CalendarDays, Camera, CheckCircle2, ChevronRight, Clock, Flame, Globe, Hash, Layers, LogOut, Share2, Target, Trophy, Upload, UserPlus, XCircle } from 'lucide-react';
 import { frameStats } from '../lib/bowling';
 import { useAuth } from '../lib/auth';
 import { removeMember, useEntriesOfEvents, useEvents, usePlayer, usePlayerEntries, usePlayerSubmissions } from '../lib/data';
@@ -168,6 +168,15 @@ export default function PlayerPage({ playerId: own }: { playerId?: string }) {
             <Badge tone="accent">{framesTotal.spares} spares</Badge>
             <span className="self-center">en {framed.length} juegos anotados por cuadros</span>
           </p>
+        )}
+
+        {isOwner && (
+          <Link
+            to="/perfil"
+            className="-mt-2 flex items-center gap-2 self-start rounded-xl px-2 py-1 text-sm font-medium text-accent hover:bg-accent-soft"
+          >
+            <Globe className="size-4" /> Mis estadísticas de todas las ligas <ChevronRight className="size-4" />
+          </Link>
         )}
 
         {isOwner && <NextPracticeCard events={events.data} playerId={p.id} />}

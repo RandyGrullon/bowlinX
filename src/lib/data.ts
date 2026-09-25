@@ -114,6 +114,63 @@ export const useAllLeagues = (enabled: boolean) =>
   useLiveQuery<League>(enabled ? 'leagues:all' : null, () => collection(db, 'leagues'));
 
 /** Varias ligas por id (las de mis membresías), en vivo. Las que no existen o no se pueden ver se omiten. */
+export interface PlayerInLeague {
+  lid: string;
+  playerId: string;
+  entries: Entry[];
+  events: BowlingEvent[];
+}
+
+/**
+ * Las participaciones y los eventos del jugador de la cuenta en cada liga donde está vinculado
+ * (para el perfil global). Solo se leen ligas de las que es miembro.
+ */
+export function usePlayerAcrossLeagues(links: { lid: string; playerId: string }[]): Live<PlayerInLeague[]> {
+  const key = links
+    .map((l) => `${l.lid}:${l.playerId}`)
+    .sort()
+    .join(',');
+  const [state, setState] = useState<Live<PlayerInLeague[]>>({ data: [], loading: links.length > 0, error: null });
+  useEffect(() => {
+    const pairs = key ? key.split(',').map((k) => k.split(':') as [string, string]) : [];
+    if (!pairs.length) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    const entries = new Map<string, Entry[]>();
+    const events = new Map<string, BowlingEvent[]>();
+    const publish = () =>
+      setState({
+        data: pairs
+          .filter(([lid]) => entries.has(lid) && events.has(lid))
+          .map(([lid, playerId]) => ({ lid, playerId, entries: entries.get(lid)!, events: events.get(lid)! })),
+        loading: pairs.some(([lid]) => !entries.has(lid) || !events.has(lid)),
+        error: null,
+      });
+    const fail = (error: Error) => setState({ data: [], loading: false, error });
+    const unsubs = pairs.flatMap(([lid, playerId]) => [
+      onSnapshot(
+        query(col(lid, 'entries'), where('playerId', '==', playerId)),
+        (snap) => {
+          entries.set(lid, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry));
+          publish();
+        },
+        fail,
+      ),
+      onSnapshot(
+        col(lid, 'events'),
+        (snap) => {
+          events.set(lid, snap.docs.map((d) => ({ id: d.id, ...d.data() }) as BowlingEvent));
+          publish();
+        },
+        fail,
+      ),
+    ]);
+    return () => unsubs.forEach((u) => u());
+  }, [key]);
+  return state;
+}
+
 export function useLeaguesByIds(ids: string[]): Live<League[]> {
   const key = [...ids].sort().join(',');
   const [state, setState] = useState<Live<League[]>>({ data: [], loading: ids.length > 0, error: null });
