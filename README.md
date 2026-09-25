@@ -1,4 +1,4 @@
-# BowlinX
+# BowlingX
 
 Ligas y torneos de boliche: jugadores, equipos, promedio, handicap y pinos por juego, desde el celular.
 

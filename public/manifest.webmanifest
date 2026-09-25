@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "BowlinX — torneos y prácticas de boliche",
-  "short_name": "BowlinX",
+  "name": "BowlingX — torneos y prácticas de boliche",
+  "short_name": "BowlingX",
   "description": "Jugadores, equipos, handicap y estadísticas de boliche.",
   "lang": "es",
   "start_url": "/",

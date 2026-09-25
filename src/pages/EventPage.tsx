@@ -136,7 +136,7 @@ export default function EventPage({ eventId: fixed }: { eventId?: string }) {
         <Button
           variant="ghost"
           onClick={async () => {
-            if (await shareLink(location.href.split('?')[0], `${eventLabel(ev)} · BowlinX`)) toast('Link copiado');
+            if (await shareLink(location.href.split('?')[0], `${eventLabel(ev)} · BowlingX`)) toast('Link copiado');
           }}
           aria-label="Compartir"
           title="Compartir"

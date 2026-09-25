@@ -53,9 +53,9 @@ export function AccountButton() {
 
 export function Brand({ to = '/ligas', compact }: { to?: string; compact?: boolean }) {
   return (
-    <Link to={to} className="flex shrink-0 items-center gap-2 font-semibold" aria-label="BowlinX">
+    <Link to={to} className="flex shrink-0 items-center gap-2 font-semibold" aria-label="BowlingX">
       <Logo />
-      {!compact && <span>BowlinX</span>}
+      {!compact && <span>BowlingX</span>}
       {usingEmulators && <span className="rounded bg-warn-soft px-1.5 text-[11px] font-medium text-warn">EMULADOR</span>}
     </Link>
   );

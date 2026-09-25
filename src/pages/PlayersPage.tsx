@@ -38,7 +38,7 @@ export default function PlayersPage() {
   const filtered = players.data.filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
 
   async function share(p: Player) {
-    const copied = await shareLink(playerUrl(lid, p.id), `${p.name} · BowlinX`);
+    const copied = await shareLink(playerUrl(lid, p.id), `${p.name} · BowlingX`);
     if (copied) toast('Link copiado');
   }
 
