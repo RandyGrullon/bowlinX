@@ -1089,7 +1089,7 @@ export async function saveVerifiedGames(lid: string, event: BowlingEvent, photo:
 }
 
 /** Envío de un jugador: juegos (y foto si hay), quedan pendientes de aprobación. */
-export async function submitGames(
+export function submitGames(
   lid: string,
   input: {
     playerId: string;
@@ -1122,8 +1122,17 @@ export async function submitGames(
     note: null,
     createdAt: serverTimestamp(),
   });
-  await batch.commit();
-  return subId;
+  // El id sale ya (sin señal el envío queda en cola): la lectura de la foto se le agrega después.
+  return { id: subId, sent: batch.commit() };
+}
+
+/**
+ * Lo que leyó la IA en la foto de un envío y de qué fila de la foto (la foto se lee en segundo plano,
+ * así que llega después de enviar). El jugador lo pone una sola vez mientras está pendiente; el admin,
+ * siempre (lee la foto él o cambia la fila).
+ */
+export async function setSubmissionScan(lid: string, subId: string, scanned: (number | null)[], scannedName: string | null) {
+  await updateDoc(ref(lid, 'submissions', subId), { scanned, scannedName: scannedName?.slice(0, 60) ?? null });
 }
 
 /**

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Grid3x3, Plus, Send, Sparkles } from 'lucide-react';
-import { submitGames } from '../lib/data';
+import { AlertTriangle, CheckCircle2, Grid3x3, Plus, Send, Sparkles, WifiOff } from 'lucide-react';
+import { setSubmissionScan, submitGames } from '../lib/data';
 import { clearSent, draftCount, latestDraft, loadDraft, restoreDraft, saveDraft } from '../lib/draft';
 import { eventTitle, parseDate, toIsoDate } from '../lib/format';
 import type { CompressedImage } from '../lib/image';
 import { useLeagueCtx } from '../lib/league';
-import type { ScanRow } from '../lib/scan';
-import { bestMatch, isValidScore } from '../lib/stats';
+import { rowFor } from '../lib/scan-result';
+import { cancelScan, scanDone, startScan, useScanJob, waitingText } from '../lib/scanJobs';
+import { isValidScore } from '../lib/stats';
 import type { BowlingEvent, Entry, GameFrames, Player } from '../lib/types';
 import { useFeedback } from './feedback';
 import { ScoreEntryModal } from './frames/ScoreEntryModal';
@@ -56,10 +57,14 @@ export function SubmitGamesModal({
   const [values, setValues] = useState<string[]>([]);
   const [frames, setFrames] = useState<Record<string, GameFrames>>({});
   const [photo, setPhoto] = useState<CompressedImage | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [scanError, setScanError] = useState<string | null>(null);
-  const [rows, setRows] = useState<ScanRow[]>([]);
+  // La foto se lee en segundo plano: se puede enviar sin esperar y lo leído se agrega al envío después.
+  const [scanId, setScanId] = useState<string | null>(null);
+  const job = useScanJob(scanId);
   const [rowIdx, setRowIdx] = useState<number | null>(null);
+  // La lectura ya se usó (para no volver a llenar ni a elegir la fila cada vez que se dibuja).
+  const applied = useRef<string | null>(null);
+  // La lectura que quedó a cargo de agregarse al envío (esa no se cancela al cerrar).
+  const handedOff = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
   const [framesFor, setFramesFor] = useState<number | null>(null);
   // El borrador se guarda solo después de cargarlo al abrir (si no, se guardaría lo de la vez anterior).
@@ -77,6 +82,8 @@ export function SubmitGamesModal({
   useEffect(() => {
     if (!open) {
       setLoaded(false);
+      // Se cerró sin enviar: la foto ya no se va a usar (no gasta el cupo gratis de la IA).
+      if (scanId !== handedOff.current) cancelScan(scanId);
       return;
     }
     // El evento pedido; si no, donde se quedó el último borrador; si no, el más reciente que ya se jugó (o por fecha).
@@ -94,9 +101,9 @@ export function SubmitGamesModal({
     loadedValues.current = `${id}:${padded(d?.values, ev?.games).join('|')}`;
     touched.current = false;
     setPhoto(null);
-    setRows([]);
+    setScanId(null);
     setRowIdx(null);
-    setScanError(null);
+    applied.current = null;
     setLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -140,6 +147,14 @@ export function SubmitGamesModal({
     });
   }
 
+  const scanning = job?.status === 'leyendo' || job?.status === 'esperando';
+  const rows = job?.status === 'listo' ? job.rows : [];
+  const scanError =
+    job?.status === 'error'
+      ? `${job.message} Igual puedes enviarla; el admin la revisará.`
+      : job?.status === 'listo' && rowIdx == null
+        ? 'No encontramos tu nombre en la foto. Elige cuál fila eres.'
+        : null;
   const scannedRow = rowIdx != null ? rows[rowIdx] ?? null : null;
   const scanned = scannedRow?.games ?? null;
   // Juegos por posición (J1, J2...): vacío = no lo jugó.
@@ -151,28 +166,41 @@ export function SubmitGamesModal({
     scanned != null && hasTyped && Array.from({ length: Math.max(typed.length, scanned.length) }, (_, i) => (typed[i] ?? null) !== (scanned[i] ?? null)).some(Boolean);
   const showGames = (gs: (number | null)[]) => gs.map((g) => g ?? '–').join(' · ');
 
-  async function onPicked(img: CompressedImage) {
+  function onPicked(img: CompressedImage) {
+    // Otra foto: la anterior ya no se usa.
+    cancelScan(scanId);
     setPhoto(img);
-    setScanError(null);
-    setRows([]);
     setRowIdx(null);
-    setScanning(true);
-    const { scanScoreboard, ScanError } = await import('../lib/scan');
-    try {
-      const found = await scanScoreboard(img.scan);
-      setRows(found);
-      const match = bestMatch(player.name, found);
-      const idx = match ? found.indexOf(match) : found.length === 1 ? 0 : null;
-      setRowIdx(idx);
-      if (idx != null && !hasTyped) {
-        setValues(Array.from({ length: Math.max(values.length, found[idx].games.length) }, (_, i) => String(found[idx].games[i] ?? '')));
-      }
-      if (idx == null) setScanError('No encontramos tu nombre en la foto. Elige cuál fila eres.');
-    } catch (e) {
-      setScanError(e instanceof ScanError ? `${e.message} Igual puedes enviarla; el admin la revisará.` : 'No se pudo escanear la foto.');
-    } finally {
-      setScanning(false);
+    setScanId(startScan(img.scan));
+  }
+
+  // Cuando termina de leerse: se elige la fila del jugador y, si no había anotado nada, se llenan sus juegos.
+  useEffect(() => {
+    if (!scanId || job?.status !== 'listo' || applied.current === scanId) return;
+    applied.current = scanId;
+    const row = rowFor(player.name, job.rows);
+    const idx = row ? job.rows.indexOf(row) : null;
+    setRowIdx(idx);
+    if (row && !hasTyped) {
+      setValues((vs) => Array.from({ length: Math.max(vs.length, row.games.length) }, (_, i) => String(row.games[i] ?? '')));
+      setFrames({});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanId, job]);
+
+  /** La foto se terminó de leer después de enviar: lo leído se agrega al envío para que el admin lo compare. */
+  function attachWhenRead(subId: string, jobId: string, sentScores: (number | null)[]) {
+    scanDone(jobId)
+      .then(async (found) => {
+        const row = rowFor(player.name, found);
+        // Si no se sabe cuál fila es, el admin la elige al revisar.
+        if (!row) return;
+        await setSubmissionScan(lid, subId, row.games, row.name);
+        const same =
+          Array.from({ length: Math.max(sentScores.length, row.games.length) }, (_, i) => (sentScores[i] ?? null) === (row.games[i] ?? null)).every(Boolean);
+        if (!same) toast(`La foto de tu envío dice ${showGames(row.games)}, distinto a lo que anotaste. El admin lo revisará.`, 'error');
+      })
+      .catch((e) => console.warn('[escaneo] no se agregó la lectura al envío', e));
   }
 
   async function send() {
@@ -191,7 +219,7 @@ export function SubmitGamesModal({
     const sent = { values: [...values], frames, date: byDate ? date : undefined };
     try {
       const kept = Object.fromEntries(Object.entries(frames).filter(([i]) => typed[+i] != null));
-      const sending = submitGames(lid, {
+      const { id: subId, sent: sending } = submitGames(lid, {
         playerId: player.id,
         eventId: byDate ? null : event!.id,
         date: byDate ? date : null,
@@ -200,6 +228,11 @@ export function SubmitGamesModal({
         frames: Object.keys(kept).length ? kept : null,
         photo,
       });
+      // La foto todavía se está leyendo: lo leído se agrega al envío cuando termine (aunque ya se cerró esto).
+      if (photo && scanId && scanning) {
+        handedOff.current = scanId;
+        attachWhenRead(subId, scanId, [...typed]);
+      }
       // Sin señal (común en la bolera) el envío queda guardado y sale solo al volver la conexión.
       const result = await Promise.race([
         sending.then(() => 'ok' as const),
@@ -226,7 +259,8 @@ export function SubmitGamesModal({
   }
 
   const dateOk = !byDate || (/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today);
-  const canSend = (!!event || byDate) && dateOk && hasTyped && !invalid && !scanning;
+  // No se espera a que se lea la foto: se comprueba sola en segundo plano.
+  const canSend = (!!event || byDate) && dateOk && hasTyped && !invalid;
 
   return (
     <>
@@ -320,8 +354,18 @@ export function SubmitGamesModal({
             <div className="flex flex-col gap-3">
               <PhotoView src={photo.data} />
               {scanning && (
-                <div className="flex items-center gap-2 rounded-xl bg-accent-soft px-3 py-2.5 text-sm text-accent">
-                  <Spinner className="text-accent" /> Leyendo la foto…
+                <div className="flex items-start gap-2 rounded-xl bg-accent-soft px-3 py-2.5 text-sm text-accent">
+                  {job?.status === 'esperando' && job.motivo === 'sin-senal' ? (
+                    <WifiOff className="mt-0.5 size-4 shrink-0" />
+                  ) : (
+                    <Spinner className="mt-0.5 shrink-0 text-accent" />
+                  )}
+                  <span>
+                    {job?.status === 'esperando' ? waitingText(job.motivo) : 'Leyendo la foto…'}{' '}
+                    {hasTyped
+                      ? 'Puedes enviar ya: se comprueba sola y el admin verá lo que dice.'
+                      : 'Tus juegos se llenan solos al leerla, o anótalos tú.'}
+                  </span>
                 </div>
               )}
               {scanError && (

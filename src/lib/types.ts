@@ -150,6 +150,8 @@ export interface Submission {
   scores: (number | null)[];
   /** Lo que leyó la IA en la foto para ese jugador (null si no pudo). */
   scanned: (number | null)[] | null;
+  /** Nombre de la fila de la foto que se tomó como la del jugador (si se leyó después de enviar). */
+  scannedName?: string | null;
   /** Cuadros de los juegos anotados tiro por tiro (clave = índice del juego). */
   frames?: Record<string, GameFrames> | null;
   /** Foto del marcador; null si se envió sin foto (el admin decide si la acepta). */

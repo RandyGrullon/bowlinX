@@ -303,11 +303,9 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['playerId', 'eventId', 'date', 'scores', 'scanned', 'frames', 'photoId', 'status', 'note', 'createdAt'])
           && request.resource.data.status == 'pendiente'
           && request.resource.data.note == null
-          && request.resource.data.scores is list
           && request.resource.data.scores.size() > 0
-          && request.resource.data.scores.size() <= 10
-          && (request.resource.data.scanned == null
-              || (request.resource.data.scanned is list && request.resource.data.scanned.size() <= 10))
+          && okScores(request.resource.data.scores)
+          && (request.resource.data.scanned == null || okScores(request.resource.data.scanned))
           && (request.resource.data.get('frames', null) == null || request.resource.data.frames is map)
           && ((request.resource.data.eventId is string
                 && exists(/databases/$(database)/documents/leagues/$(lid)/events/$(request.resource.data.eventId))
@@ -321,7 +319,22 @@ service cloud.firestore {
               || request.resource.data.photoId == null)
           && request.resource.data.createdAt == request.time
         );
-        allow update, delete: if isLeagueAdmin(lid);
+        // La foto se lee en segundo plano: lo que leyó la IA (y de qué fila de la foto) lo agrega el
+        // jugador después de enviar, una sola vez, a su envío con foto que sigue pendiente (y nada más).
+        allow update: if isLeagueAdmin(lid) || (
+          myPlayer(lid) != null
+          && resource.data.playerId == myPlayer(lid)
+          && resource.data.status == 'pendiente'
+          && resource.data.photoId != null
+          && resource.data.scanned == null
+          && onlyChanged(['scanned', 'scannedName'])
+          && request.resource.data.scanned is list
+          && request.resource.data.scanned.size() > 0
+          && okScores(request.resource.data.scanned)
+          && (request.resource.data.get('scannedName', null) == null
+              || (request.resource.data.scannedName is string && request.resource.data.scannedName.size() <= 60))
+        );
+        allow delete: if isLeagueAdmin(lid);
       }
     }
 

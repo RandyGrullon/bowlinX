@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { AIError, getAI, getGenerativeModel, GoogleAIBackend, Schema, type AI, type GenerativeModel } from 'firebase/ai';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { firebaseConfig } from './firebase';
-import { parseScanResult, ScanError, type ScanRow } from './scan-result';
+import { parseScanResult, ScanError, type ScanErrorKind, type ScanRow } from './scan-result';
 
 export { ScanError, type ScanRow };
 
@@ -112,7 +112,8 @@ export async function scanScoreboard(dataUrl: string, modelNames: string[] = MOD
     } catch (e) {
       console.warn(`[escaneo] ${modelNames[i]}`, e);
       if (statusOf(e) === 429 && i < modelNames.length - 1) continue;
-      throw new ScanError(explain(e));
+      const { message, kind } = explain(e);
+      throw new ScanError(message, kind);
     }
   }
   return parseScanResult(text);
@@ -122,18 +123,23 @@ function statusOf(e: unknown): number | undefined {
   return e instanceof AIError ? e.customErrorData?.status : undefined;
 }
 
-function explain(e: unknown): string {
+function explain(e: unknown): { message: string; kind: ScanErrorKind } {
   const msg = e instanceof Error ? e.message : String(e);
   const status = statusOf(e);
   if ((e instanceof AIError && e.code === 'api-not-enabled') || /has not been used|SERVICE_DISABLED/i.test(msg)) {
-    return 'El escaneo con IA no está activado en Firebase (AI Logic).';
+    return { message: 'El escaneo con IA no está activado en Firebase (AI Logic).', kind: 'config' };
   }
   if (status === 429 || /quota|resource.?exhausted/i.test(msg)) {
-    return 'Se alcanzó el límite gratuito del escaneo por ahora. Intenta en un minuto.';
+    return { message: 'Se alcanzó el límite gratuito del escaneo por ahora. Intenta en un minuto.', kind: 'cupo' };
   }
   if (/app.?check|attestation/i.test(msg) || status === 401 || status === 403) {
-    return 'El escaneo fue bloqueado por App Check. Revisa la configuración de App Check en Firebase.';
+    return { message: 'El escaneo fue bloqueado por App Check. Revisa la configuración de App Check en Firebase.', kind: 'config' };
   }
-  if (status == null && !navigator.onLine) return 'Sin conexión para escanear la foto.';
-  return 'No se pudo escanear la foto.';
+  // La IA respondió pero no quiso o no pudo leerla (bloqueo o respuesta cortada): reintentar da lo mismo.
+  if (e instanceof AIError && e.code === 'response-error') {
+    return { message: 'La IA no pudo leer esta foto. Prueba con otra foto.', kind: 'foto' };
+  }
+  if (status == null && !navigator.onLine) return { message: 'Sin conexión para escanear la foto.', kind: 'red' };
+  // Sin respuesta (la señal se cayó a medias) o el servidor falló: vale la pena reintentar.
+  return { message: 'No se pudo escanear la foto.', kind: status == null || status >= 500 ? 'red' : 'config' };
 }

@@ -339,6 +339,39 @@ describe('juegos', () => {
     b.set(doc(db, 'leagues/priv/submissions/s3'), { ...sub('luis', 'f2'), eventId: null, date: '2026-09-15', createdAt: serverTimestamp() });
     await assertSucceeds(b.commit());
   });
+  it('lo que leyó la IA de la foto se agrega después, una vez, a su envío pendiente', async () => {
+    await sendGames(luis(), 'priv', 'luis');
+    const s1 = 'leagues/priv/submissions/s1';
+    // Nada más que la lectura, y con pinos válidos.
+    await assertFails(updateDoc(doc(luis(), s1), { scanned: [150, 160, 170], scores: [300, 300, 300] }));
+    await assertFails(updateDoc(doc(luis(), s1), { scanned: [150, 999] }));
+    await assertFails(updateDoc(doc(luis(), s1), { scanned: [] }));
+    await assertFails(updateDoc(doc(luis(), s1), { scanned: 'x' }));
+    // Otro miembro no toca el envío de Luis.
+    await assertFails(updateDoc(doc(ana(), s1), { scanned: [150, 160, 170] }));
+    await assertFails(updateDoc(doc(luis(), s1), { scanned: [150, 160, 170], scannedName: 'x'.repeat(61) }));
+    await assertSucceeds(updateDoc(doc(luis(), s1), { scanned: [150, null, 170], scannedName: 'LUIS G' }));
+    // Una sola vez: ya leída no se cambia.
+    await assertFails(updateDoc(doc(luis(), s1), { scanned: [300, 300, 300] }));
+    // El admin sí (lee la foto él mismo o corrige la fila).
+    await assertSucceeds(updateDoc(doc(sofi(), s1), { scanned: [151, 160, 170] }));
+  });
+  it('los juegos enviados y lo leído son pinos válidos', async () => {
+    const send = (fields: Record<string, unknown>) =>
+      setDoc(doc(luis(), 'leagues/priv/submissions/s9'), { ...sub('luis', null), ...fields, createdAt: serverTimestamp() });
+    await assertFails(send({ scores: [{ a: 1 }] }));
+    await assertFails(send({ scores: [150, 301] }));
+    await assertFails(send({ scanned: [999] }));
+    await assertFails(send({ scanned: ['150'] }));
+    await assertSucceeds(send({ scores: [150, null, 170], scanned: [150, null, 171] }));
+  });
+  it('la lectura no se agrega a un envío sin foto ni a uno ya revisado', async () => {
+    await setDoc(doc(luis(), 'leagues/priv/submissions/s2'), { ...sub('luis', null), createdAt: serverTimestamp() });
+    await assertFails(updateDoc(doc(luis(), 'leagues/priv/submissions/s2'), { scanned: [150, 160, 170] }));
+    await sendGames(luis(), 'priv', 'luis');
+    await updateDoc(doc(sofi(), 'leagues/priv/submissions/s1'), { status: 'aprobado' });
+    await assertFails(updateDoc(doc(luis(), 'leagues/priv/submissions/s1'), { scanned: [150, 160, 170] }));
+  });
   it('solo los admins aprueban', async () => {
     await sendGames(luis(), 'priv', 'luis');
     await assertFails(updateDoc(doc(luis(), 'leagues/priv/submissions/s1'), { status: 'aprobado' }));

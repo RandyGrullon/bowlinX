@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Plus, ScanLine, Sparkles, Trash2 } from 'lucide-react';
 import { fetchEffectiveAverages, saveVerifiedGames, type VerifiedWrite } from '../lib/data';
 import type { CompressedImage } from '../lib/image';
 import { useLeagueCtx } from '../lib/league';
+import { ScanError } from '../lib/scan-result';
+import { cancelScan, scanDone, startScan, useScanJob } from '../lib/scanJobs';
 import { bestMatch, firstFreeSlot, isValidScore, slots } from '../lib/stats';
 import type { BowlingEvent, Entry, Player } from '../lib/types';
 import { useAction, useFeedback } from './feedback';
@@ -49,16 +51,25 @@ export function ScanModal({
   const run = useAction();
   const { toast } = useFeedback();
   const [photo, setPhoto] = useState<CompressedImage | null>(null);
-  const [scanning, setScanning] = useState(false);
+  const [scanId, setScanId] = useState<string | null>(null);
+  const job = useScanJob(scanId);
+  // El admin está mirando: la lectura no espera señal ni reintenta; si falla, anota a mano mirando la foto.
+  const scanning = job?.status === 'leyendo';
   const [scanError, setScanError] = useState<string | null>(null);
   const [rows, setRows] = useState<RowDraft[]>([]);
   const [saving, setSaving] = useState(false);
+  // La lectura de la foto actual (si se elige otra o se cierra, lo que llegue de la anterior no se usa).
+  const current = useRef<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setPhoto(null);
       setRows([]);
       setScanError(null);
+      setScanId(null);
+      current.current = null;
+    } else {
+      cancelScan(current.current);
     }
   }, [open]);
 
@@ -89,10 +100,13 @@ export function ScanModal({
     setPhoto(img);
     setRows([]);
     setScanError(null);
-    setScanning(true);
-    const { scanScoreboard, ScanError } = await import('../lib/scan');
+    cancelScan(current.current);
+    const id = startScan(img.scan, { background: false });
+    current.current = id;
+    setScanId(id);
     try {
-      const found = await scanScoreboard(img.scan);
+      const found = await scanDone(id);
+      if (current.current !== id) return;
       const used = new Set<string>();
       const next = found.map((r) => {
         const match = bestMatch(r.name, participants.filter((p) => !used.has(p.id))) ?? bestMatch(r.name, others.filter((p) => !used.has(p.id)));
@@ -114,10 +128,9 @@ export function ScanModal({
       });
       setRows(next);
     } catch (e) {
+      if (current.current !== id) return;
       setScanError(e instanceof ScanError ? e.message : 'No se pudo escanear la foto.');
       setRows([manualRow(focusPlayerId ?? '')]);
-    } finally {
-      setScanning(false);
     }
   }
 

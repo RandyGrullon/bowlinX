@@ -1,4 +1,4 @@
-import { isValidScore } from './stats';
+import { bestMatch, isValidScore } from './stats';
 
 export interface ScanRow {
   /** Nombre tal como aparece en la pantalla. */
@@ -15,7 +15,26 @@ export interface ScanRow {
   matchesTotal: boolean | null;
 }
 
-export class ScanError extends Error {}
+/**
+ * Por qué no se pudo leer la foto: `foto` (la foto no sirve), `red` (sin señal o el servidor falló:
+ * se reintenta sola), `cupo` (se acabó el cupo gratis por ahora: se reintenta en un minuto) o
+ * `config` (la configuración de Firebase: reintentar no sirve).
+ */
+export type ScanErrorKind = 'foto' | 'red' | 'cupo' | 'config';
+
+export class ScanError extends Error {
+  constructor(
+    message: string,
+    readonly kind: ScanErrorKind = 'foto',
+  ) {
+    super(message);
+  }
+}
+
+/** La fila del jugador en la foto: la que se parece a su nombre o, si hay una sola, esa. */
+export function rowFor(name: string, rows: ScanRow[]): ScanRow | null {
+  return bestMatch(name, rows) ?? (rows.length === 1 ? rows[0] : null);
+}
 
 interface RawScan {
   esPantallaDeBoliche?: boolean;
