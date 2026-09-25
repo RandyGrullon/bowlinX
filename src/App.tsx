@@ -12,7 +12,6 @@ import { TopLoader } from './components/ui';
 const LeagueShell = lazy(() => import('./components/LeagueShell'));
 const HomePage = lazy(() => import('./pages/HomePage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
-const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const LeaguesPage = lazy(() => import('./pages/LeaguesPage'));
 const JoinPage = lazy(() => import('./pages/JoinPage'));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
@@ -66,7 +65,6 @@ export default function App() {
               <Routes>
                 <Route index element={<HomePage />} />
                 <Route path="/login" element={<LoginPage />} />
-                <Route path="/cambiar-clave" element={<ResetPasswordPage />} />
                 <Route path="/ligas" element={<LeaguesPage />} />
                 <Route path="/unirse/:code" element={<JoinPage />} />
                 <Route path="/perfil" element={<AccountPage />} />

@@ -2,6 +2,8 @@
 
 Ligas y torneos de boliche: jugadores, equipos, promedio, handicap y pinos por juego, desde el celular.
 
+- **Cuentas**: registro y entrada con correo + contraseña (repetida) o con **Google**; la primera vez
+  que alguien entra con Google su cuenta se crea sola.
 - **Ligas** públicas o privadas. Cualquiera con cuenta crea la suya y queda como **dueño**; invita con
   **link, QR o código** (cambiar el código invalida el anterior). Las públicas se ven sin login.
   Cada liga tiene bolera, horario, temporada, contacto (WhatsApp) y si **exige foto** del marcador.
@@ -51,8 +53,10 @@ pnpm dev:emu
 1. **Reglas de Firestore**: publica `firestore.rules`, ya sea pegándolo en
    Consola → Firestore → Reglas, o con `npx firebase-tools login` y después `pnpm reglas`.
    Los superadmins fijos están en `isFixedSuper()` de las reglas y en `src/lib/admins.ts` (deben coincidir).
-2. **Authentication**: proveedor *Correo/contraseña* activo y, en Configuración → Acciones del
-   usuario, **"Crear cuentas" activado** (los jugadores se registran solos, sin verificar el correo).
+2. **Authentication → Método de acceso**: activa **Correo/contraseña** y **Google** (este pide el
+   nombre público del proyecto y un correo de asistencia). En Configuración → Acciones del usuario deja
+   **"Crear cuentas" activado** (sin verificación de correo). En Configuración → **Dominios autorizados**
+   agrega el dominio de Vercel (sin eso Google no deja entrar desde la app).
 3. **AI Logic** (escaneo de fotos): Consola → AI Services → AI Logic → *Get started* →
    **Gemini Developer API**. No hay que copiar ninguna API key.
 4. **App Check** (AI Logic lo exige): Consola → Security → App Check → registra la app web con

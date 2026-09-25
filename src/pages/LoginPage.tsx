@@ -1,12 +1,24 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useSearchParams } from 'react-router';
-import { ArrowLeft, LogIn, MailCheck, Send, UserPlus } from 'lucide-react';
-import { authErrorMessage, login, MIN_PASSWORD, sendReset, signUp, useAuth } from '../lib/auth';
+import { LogIn, UserPlus } from 'lucide-react';
+import { authErrorMessage, login, loginWithGoogle, MIN_PASSWORD, signUp, useAuth } from '../lib/auth';
 import { Button, Card, Field, Input, Loading, Tabs } from '../components/ui';
 import { Logo } from '../components/Logo';
 import { PasswordInput } from '../components/PasswordInput';
 
 type Mode = 'entrar' | 'registro';
+
+/** La "G" de Google con sus colores (botón de entrar con Google). */
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 48 48" className="size-4" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z" />
+    </svg>
+  );
+}
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
@@ -16,9 +28,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'correo' | 'google' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [forgot, setForgot] = useState(false);
 
   // Mientras se crea la cuenta no se redirige: el perfil (users/{uid}) todavía se está guardando.
   if (user && !busy) {
@@ -44,7 +55,7 @@ export default function LoginPage() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (mode === 'registro' && (password !== password2 || password.length < MIN_PASSWORD)) return;
-    setBusy(true);
+    setBusy('correo');
     setError(null);
     try {
       if (mode === 'registro') await signUp(name, email, password);
@@ -52,7 +63,20 @@ export default function LoginPage() {
     } catch (err) {
       setError(authErrorMessage(err));
     } finally {
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  /** Con Google sirve igual para entrar o registrarse: si no tenía cuenta, se crea. */
+  async function google() {
+    setBusy('google');
+    setError(null);
+    try {
+      await loginWithGoogle();
+    } catch (err) {
+      setError(authErrorMessage(err) || null);
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -62,11 +86,8 @@ export default function LoginPage() {
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <Logo className="size-12" />
           <h1 className="text-2xl font-bold tracking-tight">BowlingX</h1>
-          <p className="text-sm text-muted">Torneos y prácticas de boliche</p>
+          <p className="text-sm text-muted">Ligas y torneos de boliche</p>
         </div>
-        {forgot ? (
-          <ForgotPassword initialEmail={email} onBack={() => setForgot(false)} />
-        ) : (
         <Card className="flex flex-col gap-4 p-5">
           <Tabs
             items={[
@@ -76,6 +97,13 @@ export default function LoginPage() {
             active={mode}
             onChange={switchMode}
           />
+          <Button onClick={google} loading={busy === 'google'} disabled={!!busy} icon={<GoogleIcon />}>
+            {mode === 'registro' ? 'Registrarme con Google' : 'Entrar con Google'}
+          </Button>
+          <div className="flex items-center gap-3 text-xs text-muted">
+            <span className="h-px flex-1 bg-line" />o con tu correo
+            <span className="h-px flex-1 bg-line" />
+          </div>
           <form onSubmit={submit} className="flex flex-col gap-4">
             {mode === 'registro' && (
               <Field label="Tu nombre">
@@ -93,18 +121,6 @@ export default function LoginPage() {
                 invalid={short}
               />
             </Field>
-            {mode === 'entrar' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  setForgot(true);
-                }}
-                className="-mt-2 self-end text-xs font-medium text-accent"
-              >
-                ¿Olvidaste tu contraseña?
-              </button>
-            )}
             {mode === 'registro' && (
               <Field label="Repite la contraseña" hint={mismatch ? 'Las contraseñas no coinciden.' : undefined}>
                 <PasswordInput value={password2} onChange={setPassword2} autoComplete="new-password" invalid={mismatch} />
@@ -114,75 +130,20 @@ export default function LoginPage() {
             <Button
               type="submit"
               variant="primary"
-              loading={busy}
-              disabled={mode === 'registro' && (mismatch || short || !password2)}
+              loading={busy === 'correo'}
+              disabled={!!busy || (mode === 'registro' && (mismatch || short || !password2))}
               icon={mode === 'registro' ? <UserPlus className="size-4" /> : <LogIn className="size-4" />}
             >
               {mode === 'registro' ? 'Crear cuenta' : 'Entrar'}
             </Button>
           </form>
         </Card>
-        )}
         <p className="mt-4 text-center text-xs text-muted">
           {mode === 'registro'
-            ? 'Después eliges quién eres en la lista de jugadores para ver tu perfil y subir tus juegos.'
-            : 'Jugadores y administradores entran con su correo.'}
+            ? 'Después te unes a tu liga y eliges quién eres en la lista de jugadores.'
+            : 'Si entras con Google por primera vez, tu cuenta se crea sola.'}
         </p>
       </div>
     </div>
-  );
-}
-
-/** Pide el correo y Firebase manda el link para poner una contraseña nueva. */
-function ForgotPassword({ initialEmail, onBack }: { initialEmail: string; onBack: () => void }) {
-  const [email, setEmail] = useState(initialEmail);
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await sendReset(email);
-      setSent(true);
-    } catch (err) {
-      setError(authErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Card className="flex flex-col gap-4 p-5">
-      <div>
-        <h2 className="text-lg font-semibold">¿Olvidaste tu contraseña?</h2>
-        <p className="text-sm text-muted">Te mandamos un link a tu correo para que pongas una nueva.</p>
-      </div>
-      {sent ? (
-        <div className="animate-fade-up flex flex-col items-center gap-2 rounded-xl bg-ok-soft px-4 py-5 text-center text-sm">
-          <MailCheck className="size-8 text-ok" />
-          <p className="font-medium text-fg">Revisa tu correo</p>
-          <p className="text-muted">
-            Si <b className="text-fg">{email.trim()}</b> tiene cuenta, te llegó el link (puede tardar un minuto; mira también en spam o
-            promociones).
-          </p>
-        </div>
-      ) : (
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <Field label="Correo de tu cuenta">
-            <Input type="email" autoComplete="username" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </Field>
-          {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>}
-          <Button type="submit" variant="primary" loading={busy} icon={<Send className="size-4" />}>
-            Enviarme el link
-          </Button>
-        </form>
-      )}
-      <Button variant="ghost" icon={<ArrowLeft className="size-4" />} onClick={onBack}>
-        Volver a entrar
-      </Button>
-    </Card>
   );
 }
